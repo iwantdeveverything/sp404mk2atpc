@@ -1,0 +1,19 @@
+name: Bug Report
+description: Report a bug in the SP-404MK2 DAW
+title: 'fix(scope): '
+labels: ['type:bug', 'status:needs-review']
+body:
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: Bug Description
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this?
+    validations:
+      required: true

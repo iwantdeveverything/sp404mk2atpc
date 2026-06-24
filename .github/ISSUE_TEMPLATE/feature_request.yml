@@ -1,0 +1,19 @@
+name: Feature Request
+description: Propose a new feature for the SP-404MK2 DAW
+title: 'feat(scope): '
+labels: ['type:feature', 'status:needs-review']
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the feature clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements
+      description: What are the acceptance criteria?
+    validations:
+      required: true

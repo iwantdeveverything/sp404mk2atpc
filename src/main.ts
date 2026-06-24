@@ -18,6 +18,11 @@ let currentTargetPad = 0;
 
 let isBooting = false;
 
+let isBus1Held = false;
+let isBus2Held = false;
+let isResampleArmed = false;
+let isResampleRecording = false;
+
 let typingTimeout: number | undefined;
 
 const typeText = async (element: HTMLElement, text: string, speedMs = 20): Promise<void> => {
@@ -63,6 +68,47 @@ window.addEventListener("DOMContentLoaded", () => {
   const uploadBtn = document.getElementById("audio-upload-btn");
   const targetPadDisplay = document.getElementById("target-pad");
   const statusDisplay = document.getElementById("status-display");
+  const resampleBtn = document.getElementById("resample-btn");
+  const bus1Btn = document.getElementById("bus1-btn");
+  const bus2Btn = document.getElementById("bus2-btn");
+  const lcdScreen = document.querySelector(".lcd-screen");
+
+  // Routing Bus Buttons
+  bus1Btn?.addEventListener("mousedown", () => { isBus1Held = true; bus1Btn.classList.add("active"); });
+  bus1Btn?.addEventListener("touchstart", (e) => { e.preventDefault(); isBus1Held = true; bus1Btn.classList.add("active"); });
+  window.addEventListener("mouseup", () => { isBus1Held = false; bus1Btn?.classList.remove("active"); });
+  window.addEventListener("touchend", () => { isBus1Held = false; bus1Btn?.classList.remove("active"); });
+
+  bus2Btn?.addEventListener("mousedown", () => { isBus2Held = true; bus2Btn.classList.add("active"); });
+  bus2Btn?.addEventListener("touchstart", (e) => { e.preventDefault(); isBus2Held = true; bus2Btn.classList.add("active"); });
+  window.addEventListener("mouseup", () => { isBus2Held = false; bus2Btn?.classList.remove("active"); });
+  window.addEventListener("touchend", () => { isBus2Held = false; bus2Btn?.classList.remove("active"); });
+
+  // Resample Button
+  resampleBtn?.addEventListener("click", async () => {
+    if (isBooting) return;
+    
+    if (isResampleRecording) {
+      isResampleRecording = false;
+      isResampleArmed = false;
+      resampleBtn.classList.remove("resample-recording", "resample-armed");
+      lcdScreen?.classList.remove("lcd-resampling");
+      if (statusDisplay) typeText(statusDisplay, "READY", 10);
+      try { await invoke("set_resampling", { state: false }); } catch (err) { console.error(err); }
+      return;
+    }
+
+    isResampleArmed = !isResampleArmed;
+    if (isResampleArmed) {
+      resampleBtn.classList.add("resample-armed");
+      lcdScreen?.classList.add("lcd-resampling");
+      if (statusDisplay) typeText(statusDisplay, "[RESAMPLING ARMED]", 10);
+    } else {
+      resampleBtn.classList.remove("resample-armed");
+      lcdScreen?.classList.remove("lcd-resampling");
+      if (statusDisplay) typeText(statusDisplay, "READY", 10);
+    }
+  });
 
   const runBootSequence = async () => {
     isBooting = true;
@@ -89,12 +135,37 @@ window.addEventListener("DOMContentLoaded", () => {
   const triggerPad = async (padId: number) => {
     if (isBooting) return;
     animatePad(padId);
-    if (statusDisplay) typeText(statusDisplay, `PLAYING PAD ${padId + 1}`, 10);
+
+    if (isBus1Held || isBus2Held) {
+      const bus = isBus1Held ? "Bus1" : "Bus2";
+      if (statusDisplay) typeText(statusDisplay, `PAD ${padId + 1} -> ${bus.toUpperCase()}`, 10);
+      try {
+        await invoke("set_pad_bus", { pad: padId, bus });
+      } catch (err) {
+        console.error("Error setting pad bus:", err);
+      }
+      return;
+    }
+
+    if (isResampleArmed && !isResampleRecording) {
+      isResampleArmed = false;
+      isResampleRecording = true;
+      resampleBtn?.classList.remove("resample-armed");
+      resampleBtn?.classList.add("resample-recording");
+      if (statusDisplay) typeText(statusDisplay, "[RECORDING]", 10);
+      try {
+        await invoke("set_resampling", { state: true });
+      } catch (err) {
+        console.error("Error setting resampling:", err);
+      }
+    }
+
+    if (statusDisplay && !isResampleRecording) typeText(statusDisplay, `PLAYING PAD ${padId + 1}`, 10);
     try {
       await invoke("trigger_pad", { padId });
     } catch (err) {
       console.error("Error triggering pad:", err);
-      if (statusDisplay) typeText(statusDisplay, `ERROR PAD ${padId + 1}`, 10);
+      if (statusDisplay && !isResampleRecording) typeText(statusDisplay, `ERROR PAD ${padId + 1}`, 10);
     }
   };
 

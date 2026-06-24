@@ -208,3 +208,60 @@ body {
   box-shadow: 0 0 20px var(--pad-active-glow);
   transition: box-shadow 0.3s ease-out, background 0.3s ease-out;
 }
+
+/* Routing & Resampling UI */
+@keyframes blink-red {
+  0%, 100% {
+    background-color: rgba(255, 94, 58, 0.2);
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  }
+  50% {
+    background-color: rgba(255, 94, 58, 0.8);
+    box-shadow: inset 0 0 15px rgba(255, 94, 58, 0.8), 0 0 10px rgba(255, 94, 58, 0.5);
+  }
+}
+
+.resample-armed {
+  animation: blink-red 1s infinite ease-in-out;
+  color: #fff;
+}
+
+.resample-recording {
+  background-color: var(--pad-active);
+  box-shadow: 
+    0 0 20px var(--pad-active-glow),
+    inset 0 2px 5px rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+
+.lcd-resampling {
+  background-color: rgba(255, 94, 58, 0.15) !important;
+  box-shadow: 
+    inset 0 4px 8px rgba(255, 94, 58, 0.2),
+    0 0 10px rgba(255, 94, 58, 0.1) !important;
+}
+
+.routing-btn {
+  background: #1b2621;
+  color: var(--lcd-bg);
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.2s;
+  font-family: 'VT323', monospace;
+  font-size: 20px;
+  border: none;
+}
+
+.routing-btn:hover {
+  background: #2c3e35;
+}
+
+.routing-btn:active {
+  transform: translateY(2px);
+}
+
+.routing-btn.active {
+  background: var(--pad-active);
+  color: #fff;
+}

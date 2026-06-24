@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
-use crate::audio::state::AudioState;
+use crate::audio::state::{AudioState, AudioStateInner};
 
 pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
     let host = cpal::default_host();
@@ -9,14 +9,14 @@ pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
 
     let stream_config: StreamConfig = config.clone().into();
     let channels = stream_config.channels as usize;
-    let sample_rate = stream_config.sample_rate.0;
+    let sample_rate = stream_config.sample_rate;
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
             device.build_output_stream(
-                &stream_config,
+                stream_config.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     write_data(data, channels, sample_rate, &state)
                 },
@@ -45,12 +45,14 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
 
     let mut finished_events = Vec::new();
 
+    let AudioStateInner { buffers, active_events } = &mut *inner;
+
     // The output buffer is interleaved: [L, R, L, R, ...]
     for frame in output.chunks_mut(channels) {
         let mut frame_mix = vec![0.0; channels];
 
-        for (i, event) in inner.active_events.iter_mut().enumerate() {
-            if let Some(buffer) = inner.buffers.get(&event.pad_id) {
+        for (i, event) in active_events.iter_mut().enumerate() {
+            if let Some(buffer) = buffers.get(&event.pad_id) {
                 let ratio = buffer.sample_rate as f32 / target_sample_rate as f32;
                 let index_f = event.position;
                 let index = index_f as usize;
@@ -78,7 +80,7 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
 
         // Apply mix to frame with clipping protection
         for (c, sample) in frame.iter_mut().enumerate() {
-            *sample = frame_mix[c].clamp(-1.0, 1.0);
+            *sample = frame_mix[c].clamp(-1.0_f32, 1.0_f32);
         }
     }
 
@@ -86,8 +88,8 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
     finished_events.sort_unstable_by(|a, b| b.cmp(a));
     finished_events.dedup();
     for i in finished_events {
-        if i < inner.active_events.len() {
-            inner.active_events.remove(i);
+        if i < active_events.len() {
+            active_events.remove(i);
         }
     }
 }

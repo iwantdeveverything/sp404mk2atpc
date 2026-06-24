@@ -32,11 +32,11 @@ Chain strategy: pending
 
 ## Phase 2: Audio Engine Core
 
-- [ ] 2.1 Add Rust dependencies (`cpal`, `hound`, MP3 decoder) to `src-tauri/Cargo.toml`.
-- [ ] 2.2 Create `src-tauri/src/audio/state.rs` for thread-safe audio buffers and playback events.
-- [ ] 2.3 Create `src-tauri/src/audio/engine.rs` to initialize `cpal` stream and audio thread.
-- [ ] 2.4 Implement basic on-the-fly resampling algorithm in the audio callback.
-- [ ] 2.5 Implement audio mixer to handle simultaneous triggers.
+- [x] 2.1 Add Rust dependencies (`cpal`, `hound`, MP3 decoder) to `src-tauri/Cargo.toml`.
+- [x] 2.2 Create `src-tauri/src/audio/state.rs` for thread-safe audio buffers and playback events.
+- [x] 2.3 Create `src-tauri/src/audio/engine.rs` to initialize `cpal` stream and audio thread.
+- [x] 2.4 Implement basic on-the-fly resampling algorithm in the audio callback.
+- [x] 2.5 Implement audio mixer to handle simultaneous triggers.
 
 ## Phase 3: File Loading and IPC
 

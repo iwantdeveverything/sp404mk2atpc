@@ -1,16 +1,37 @@
 pub mod audio;
+pub mod fs;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use tauri::State;
+use std::path::Path;
+use audio::state::AudioState;
+
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn load_audio(path: String, pad_id: usize, state: State<'_, AudioState>) -> Result<(), String> {
+    let audio_buffer = fs::audio::load_file(Path::new(&path))?;
+    state.add_buffer(pad_id, audio_buffer);
+    Ok(())
+}
+
+#[tauri::command]
+fn trigger_pad(pad_id: usize, state: State<'_, AudioState>) -> Result<(), String> {
+    state.trigger_pad(pad_id);
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let audio_state = AudioState::new();
+    
+    let stream = audio::engine::start_audio_engine(audio_state.clone())
+        .expect("Failed to start audio engine");
+    
+    // Leak the stream to keep it alive for the lifetime of the application
+    Box::leak(Box::new(stream));
+
     tauri::Builder::default()
+        .manage(audio_state)
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

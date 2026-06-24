@@ -40,10 +40,10 @@ Chain strategy: pending
 
 ## Phase 3: File Loading and IPC
 
-- [ ] 3.1 Create `src-tauri/src/fs/audio.rs` to handle parsing both WAV and MP3 files.
-- [ ] 3.2 Implement `load_audio` Tauri command to read audio into `AudioState`.
-- [ ] 3.3 Implement `trigger_pad` Tauri command.
-- [ ] 3.4 Wire up state and commands in `src-tauri/src/main.rs`.
+- [x] 3.1 Create `src-tauri/src/fs/audio.rs` to handle parsing both WAV and MP3 files.
+- [x] 3.2 Implement `load_audio` Tauri command to read audio into `AudioState`.
+- [x] 3.3 Implement `trigger_pad` Tauri command.
+- [x] 3.4 Wire up state and commands in `src-tauri/src/main.rs`.
 
 ## Phase 4: UI Integration
 

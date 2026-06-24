@@ -19,3 +19,10 @@
 - **3.2 Implement load_audio command**: Completed. Added Tauri command to read and cache audio in `AudioState`.
 - **3.3 Implement trigger_pad command**: Completed. Added Tauri command to dispatch playback events in the audio mixer.
 - **3.4 Wire up state and commands**: Completed. Added the `AudioState` to `tauri::Builder`'s managed state and initialized the `cpal` stream alongside command registrations in `src-tauri/src/lib.rs`.
+
+## Phase 4: UI Integration
+
+- **4.1 Update src/index.html**: Completed. Added a robust HTML structure representing an SP-404 layout including a header LCD screen area, target pad display, load sample button, and a 4x4 pad grid.
+- **4.2 Write src/styles.css**: Completed. Styled the application with a premium dark UI featuring glassmorphism, depth shadows, an LCD styled display (`VT323` font), and modern typography (`Outfit` font). Pads include micro-animations (`transform: scale`, glow shadows) for active and hover states.
+- **4.3 Update src/main.ts**: Completed. Wired up the 16 pads. Added `mousedown` listeners and a comprehensive keyboard map (1-4, q-r, a-f, z-v) which invoke the Tauri `trigger_pad` command upon interaction. Right-clicking sets the target pad.
+- **4.4 Add file picker logic**: Completed. Hooked up the load button using `@tauri-apps/plugin-dialog` to properly browse the local filesystem for WAV/MP3 files. Selected files invoke `load_audio` with the correct absolute path to update the backend state.

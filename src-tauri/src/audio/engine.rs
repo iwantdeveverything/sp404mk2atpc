@@ -97,3 +97,63 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::state::{AudioBuffer, AudioState};
+
+    #[test]
+    fn test_write_data_mixing() {
+        let state = AudioState::new();
+        state.add_buffer(
+            0,
+            AudioBuffer {
+                samples: vec![1.0, 1.0, 1.0, 1.0],
+                channels: 1,
+                sample_rate: 44100,
+            },
+        );
+        state.add_buffer(
+            1,
+            AudioBuffer {
+                samples: vec![-0.5, -0.5, -0.5, -0.5],
+                channels: 1,
+                sample_rate: 44100,
+            },
+        );
+
+        state.trigger_pad(0);
+        state.trigger_pad(1);
+
+        let mut output = vec![0.0; 4]; // 2 frames of stereo
+        write_data(&mut output, 2, 44100, &state);
+
+        assert_eq!(output, vec![0.5, 0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn test_write_data_resampling() {
+        let state = AudioState::new();
+        state.add_buffer(
+            0,
+            AudioBuffer {
+                samples: vec![0.1, 0.2, 0.3, 0.4],
+                channels: 1,
+                sample_rate: 22050, // Half the target rate
+            },
+        );
+
+        state.trigger_pad(0);
+
+        let mut output = vec![0.0; 8]; // 4 frames of stereo
+        write_data(&mut output, 2, 44100, &state);
+
+        // Ratio is 0.5.
+        // Frame 1: index 0 (int 0) -> buffer[0] -> 0.1
+        // Frame 2: index 0.5 (int 0) -> buffer[0] -> 0.1
+        // Frame 3: index 1.0 (int 1) -> buffer[1] -> 0.2
+        // Frame 4: index 1.5 (int 1) -> buffer[1] -> 0.2
+        assert_eq!(output, vec![0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2]);
+    }
+}

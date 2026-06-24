@@ -16,6 +16,25 @@ const keyMap: Record<string, number> = {
 
 let currentTargetPad = 0;
 
+const formatDropMessage = (count: number, startPad: number, endPad: number): string => {
+  if (count === 1) {
+    return `LOADED 1 IN PAD ${startPad + 1}`;
+  }
+  return `LOADED ${count} IN PADS ${startPad + 1}-${endPad + 1}`;
+};
+
+const playCascadeAnimation = (padIndices: number[]) => {
+  padIndices.forEach((padId, index) => {
+    setTimeout(() => {
+      const padEl = document.querySelector(`[data-pad="${padId}"]`);
+      if (padEl) {
+        padEl.classList.add("cascade-glow");
+        setTimeout(() => padEl.classList.remove("cascade-glow"), 300);
+      }
+    }, index * 100);
+  });
+};
+
 window.addEventListener("DOMContentLoaded", () => {
   const pads = document.querySelectorAll<HTMLButtonElement>(".pad");
   const uploadBtn = document.getElementById("audio-upload-btn");
@@ -131,17 +150,33 @@ window.addEventListener("DOMContentLoaded", () => {
 
       if (statusDisplay) statusDisplay.innerText = "LOADING...";
 
+      const loadedIndices: number[] = [];
+
       for (let i = 0; i < validPaths.length; i++) {
         const currentPadId = startPadId + i;
         if (currentPadId > 15) break;
         
         try {
           await invoke("load_audio", { path: validPaths[i], padId: currentPadId });
-          if (statusDisplay) statusDisplay.innerText = `LOADED PAD ${currentPadId + 1}`;
+          loadedIndices.push(currentPadId);
         } catch (err) {
           console.error(`Error loading audio for pad ${currentPadId}:`, err);
           if (statusDisplay) statusDisplay.innerText = "LOAD ERROR";
         }
+      }
+
+      if (loadedIndices.length > 0) {
+        const endPadId = loadedIndices[loadedIndices.length - 1];
+        if (statusDisplay) {
+          statusDisplay.innerText = formatDropMessage(loadedIndices.length, startPadId, endPadId);
+        }
+        playCascadeAnimation(loadedIndices);
+        
+        setTimeout(() => {
+          if (statusDisplay && statusDisplay.innerText.startsWith("LOADED")) {
+            statusDisplay.innerText = "";
+          }
+        }, 2000);
       }
     }
   });

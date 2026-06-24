@@ -198,3 +198,10 @@ body {
   box-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
   background: linear-gradient(145deg, #3d4356, #2d313f);
 }
+
+/* Cascade animation effect for drop feedback */
+.pad.cascade-glow {
+  background: var(--pad-active);
+  box-shadow: 0 0 20px var(--pad-active-glow);
+  transition: box-shadow 0.3s ease-out, background 0.3s ease-out;
+}

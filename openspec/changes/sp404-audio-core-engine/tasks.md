@@ -11,7 +11,7 @@ Chained PRs recommended: Yes
 - [x] Implement mute group choking logic: scanning active voices and halting matching groups when a new voice triggers.
 
 ## PR 2: DSP Graph Routing & Resampling
-- [ ] Implement static DSP pipeline flow (`Voice Array` -> `Bus 1 / Bus 2 / Dry` -> `Master FX` -> `Output`).
-- [ ] Allocate large static vector for resampling buffer at initialization.
-- [ ] Add lock-free boolean flag (`AtomicBool`) to trigger resampling capture.
-- [ ] Implement audio stream capture to the internal record buffer when resampling mode is armed.
+- [x] Implement static DSP pipeline flow (`Voice Array` -> `Bus 1 / Bus 2 / Dry` -> `Master FX` -> `Output`).
+- [x] Allocate large static vector for resampling buffer at initialization.
+- [x] Add lock-free boolean flag (`AtomicBool`) to trigger resampling capture.
+- [x] Implement audio stream capture to the internal record buffer when resampling mode is armed.

@@ -1,5 +1,13 @@
 use rtrb::{Producer, RingBuffer};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BusRouting {
+    Bus1,
+    Bus2,
+    Dry,
+}
 
 #[derive(Clone)]
 pub struct AudioBuffer {
@@ -14,12 +22,14 @@ pub struct PlaybackEvent {
     pub position: f32,
     pub volume: f32,
     pub mute_group: Option<u8>,
+    pub routing: BusRouting,
 }
 
 pub enum AudioCommand {
     TriggerPad {
         pad_id: usize,
         mute_group: Option<u8>,
+        routing: BusRouting,
     },
     AddBuffer(usize, Arc<AudioBuffer>),
 }
@@ -27,6 +37,7 @@ pub enum AudioCommand {
 #[derive(Clone)]
 pub struct AudioState {
     pub command_tx: Arc<std::sync::Mutex<Producer<AudioCommand>>>,
+    pub resampling_armed: Arc<AtomicBool>,
 }
 
 impl AudioState {
@@ -35,6 +46,7 @@ impl AudioState {
         (
             Self {
                 command_tx: Arc::new(std::sync::Mutex::new(producer)),
+                resampling_armed: Arc::new(AtomicBool::new(false)),
             },
             consumer,
         )
@@ -46,9 +58,9 @@ impl AudioState {
         }
     }
 
-    pub fn trigger_pad(&self, pad_id: usize, mute_group: Option<u8>) {
+    pub fn trigger_pad(&self, pad_id: usize, mute_group: Option<u8>, routing: BusRouting) {
         if let Ok(mut tx) = self.command_tx.lock() {
-            let _ = tx.push(AudioCommand::TriggerPad { pad_id, mute_group });
+            let _ = tx.push(AudioCommand::TriggerPad { pad_id, mute_group, routing });
         }
     }
 }

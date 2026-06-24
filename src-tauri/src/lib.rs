@@ -14,7 +14,7 @@ fn load_audio(path: String, pad_id: usize, state: State<'_, AudioState>) -> Resu
 
 #[tauri::command]
 fn trigger_pad(pad_id: usize, state: State<'_, AudioState>) -> Result<(), String> {
-    state.trigger_pad(pad_id, None);
+    state.trigger_pad(pad_id, None, audio::state::BusRouting::Dry);
     Ok(())
 }
 

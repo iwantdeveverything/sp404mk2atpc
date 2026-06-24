@@ -1,11 +1,10 @@
-# Apply Progress: Core Audio Engine
+# Apply Progress: PR 2
 
-## PR 1: Core Lock-Free Infrastructure & Mute Groups
-- Created branch `feat/audio-core-engine`.
-- Added `rtrb` crate for real-time ring buffer capabilities.
-- Refactored `AudioState` in `src-tauri/src/audio/state.rs` to use lock-free communication queue (`AudioCommand` enum for IPC).
-- Renamed voice tracking to `PlaybackEvent` and added `mute_group: Option<u8>` to it.
-- Re-architected `src-tauri/src/audio/engine.rs` so `write_data` and the audio callback only read from the `rtrb::Consumer` without locking a mutex.
-- Implemented mute group choking logic directly inside `write_data` command processing block by retaining non-matching group IDs.
-- Added tests for `test_mute_group_choking` inside `engine.rs`.
-- Validated via `cargo test` passing successfully.
+- Checked out new feature branch: `feat/dsp-graph-routing-resampling`
+- Updated `src-tauri/src/audio/state.rs` to include `BusRouting` (Bus1, Bus2, Dry), and added it to `AudioCommand` and `PlaybackEvent`.
+- Added an `Arc<AtomicBool>` named `resampling_armed` in `AudioState` to support lock-free triggering.
+- Updated `src-tauri/src/audio/engine.rs` to initialize a static vector of size 28,800,000 floats (5 minutes of stereo 48kHz audio) for the resampling capture buffer to avoid allocations.
+- Implemented static DSP pipeline flow mapping active voices to Bus1, Bus2, and Dry mix channels.
+- Added capture logic at the end of the `write_data` function that records to `resampling_buffer` when `resampling_armed` is true.
+- Updated test cases in `engine.rs` to properly use the new routing parameters and test setup.
+- Updated `tasks.md` to reflect the completion of PR 2 tasks.

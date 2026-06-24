@@ -26,3 +26,8 @@
 - **4.2 Write src/styles.css**: Completed. Styled the application with a premium dark UI featuring glassmorphism, depth shadows, an LCD styled display (`VT323` font), and modern typography (`Outfit` font). Pads include micro-animations (`transform: scale`, glow shadows) for active and hover states.
 - **4.3 Update src/main.ts**: Completed. Wired up the 16 pads. Added `mousedown` listeners and a comprehensive keyboard map (1-4, q-r, a-f, z-v) which invoke the Tauri `trigger_pad` command upon interaction. Right-clicking sets the target pad.
 - **4.4 Add file picker logic**: Completed. Hooked up the load button using `@tauri-apps/plugin-dialog` to properly browse the local filesystem for WAV/MP3 files. Selected files invoke `load_audio` with the correct absolute path to update the backend state.
+
+## Phase 5: Testing
+
+- **5.1 Write unit tests for WAV/MP3 parsing logic**: Completed. Wrote unit tests in `src-tauri/src/fs/audio.rs` to generate a temporary WAV file using `hound` and successfully verify the sample extraction, normalization, and bounds correctness (`test_load_wav_valid`). Added `test_load_file_unsupported_extension` for error handling.
+- **5.2 Write unit tests for the basic resampling algorithm and audio mixer**: Completed. Added unit tests in `src-tauri/src/audio/engine.rs` to verify that `write_data` correctly handles mixing overlapping buffers from different pads (`test_write_data_mixing`) and resamples properly with the correct ratio calculations (`test_write_data_resampling`). Tests verified and passing.

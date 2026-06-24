@@ -54,5 +54,5 @@ Chain strategy: pending
 
 ## Phase 5: Testing
 
-- [ ] 5.1 Write unit tests for WAV/MP3 parsing logic.
-- [ ] 5.2 Write unit tests for the basic resampling algorithm and audio mixer.
+- [x] 5.1 Write unit tests for WAV/MP3 parsing logic.
+- [x] 5.2 Write unit tests for the basic resampling algorithm and audio mixer.

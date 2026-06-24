@@ -84,3 +84,47 @@ pub fn load_file(path: &Path) -> Result<AudioBuffer, String> {
         _ => Err(format!("Unsupported file format: {}", extension)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hound::{SampleFormat, WavSpec, WavWriter};
+    use std::env::temp_dir;
+    use std::fs;
+
+    #[test]
+    fn test_load_wav_valid() {
+        let mut path = temp_dir();
+        path.push("test_audio.wav");
+
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(&path, spec).unwrap();
+        writer.write_sample(i16::MAX).unwrap();
+        writer.write_sample(0_i16).unwrap();
+        writer.write_sample(-i16::MAX).unwrap();
+        writer.finalize().unwrap();
+
+        let result = load_wav(&path).unwrap();
+        assert_eq!(result.channels, 1);
+        assert_eq!(result.sample_rate, 44100);
+        assert_eq!(result.samples.len(), 3);
+        assert!((result.samples[0] - 1.0).abs() < 0.001);
+        assert_eq!(result.samples[1], 0.0);
+        assert!((result.samples[2] - -1.0).abs() < 0.001);
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_load_file_unsupported_extension() {
+        let mut path = temp_dir();
+        path.push("test.txt");
+        let result = load_file(&path);
+        assert!(result.is_err());
+    }
+}

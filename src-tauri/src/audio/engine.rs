@@ -1,17 +1,23 @@
-use crate::audio::state::{AudioBuffer, AudioCommand, AudioState, PlaybackEvent};
+use crate::audio::state::{AudioBuffer, AudioCommand, AudioState, BusRouting, PlaybackEvent};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
 use rtrb::Consumer;
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+const RESAMPLE_BUFFER_SIZE: usize = 48000 * 2 * 60 * 5; // 5 minutes stereo 48k
 
 struct AudioEngineThreadState {
     buffers: HashMap<usize, Arc<AudioBuffer>>,
     active_events: Vec<PlaybackEvent>,
     command_rx: Consumer<AudioCommand>,
+    resampling_buffer: Vec<f32>,
+    resampling_index: usize,
+    resampling_armed: Arc<std::sync::atomic::AtomicBool>,
 }
 
-pub fn start_audio_engine(_state: AudioState, consumer: Consumer<AudioCommand>) -> Result<Stream, String> {
+pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -> Result<Stream, String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -28,6 +34,9 @@ pub fn start_audio_engine(_state: AudioState, consumer: Consumer<AudioCommand>) 
         buffers: HashMap::new(),
         active_events: Vec::new(),
         command_rx: consumer,
+        resampling_buffer: vec![0.0; RESAMPLE_BUFFER_SIZE],
+        resampling_index: 0,
+        resampling_armed: state.resampling_armed,
     };
 
     let stream = match config.sample_format() {
@@ -60,7 +69,7 @@ fn write_data(
             AudioCommand::AddBuffer(pad_id, buffer) => {
                 thread_state.buffers.insert(pad_id, buffer);
             }
-            AudioCommand::TriggerPad { pad_id, mute_group } => {
+            AudioCommand::TriggerPad { pad_id, mute_group, routing } => {
                 if thread_state.buffers.contains_key(&pad_id) {
                     // Mute group choking logic
                     if let Some(mg) = mute_group {
@@ -74,6 +83,7 @@ fn write_data(
                         position: 0.0,
                         volume: 1.0,
                         mute_group,
+                        routing,
                     });
                 }
             }
@@ -89,7 +99,9 @@ fn write_data(
 
     // The output buffer is interleaved: [L, R, L, R, ...]
     for frame in output.chunks_mut(channels) {
-        let mut frame_mix = vec![0.0; channels];
+        let mut bus1_mix = vec![0.0; channels];
+        let mut bus2_mix = vec![0.0; channels];
+        let mut dry_mix = vec![0.0; channels];
 
         for (i, event) in thread_state.active_events.iter_mut().enumerate() {
             if let Some(buffer) = thread_state.buffers.get(&event.pad_id) {
@@ -108,7 +120,12 @@ fn write_data(
                     let sample_idx = index * (buffer.channels as usize) + source_c;
 
                     if sample_idx < buffer.samples.len() {
-                        frame_mix[c] += buffer.samples[sample_idx] * event.volume;
+                        let sample_val = buffer.samples[sample_idx] * event.volume;
+                        match event.routing {
+                            BusRouting::Bus1 => bus1_mix[c] += sample_val,
+                            BusRouting::Bus2 => bus2_mix[c] += sample_val,
+                            BusRouting::Dry => dry_mix[c] += sample_val,
+                        }
                     }
                 }
 
@@ -118,9 +135,25 @@ fn write_data(
             }
         }
 
+        let mut frame_mix = vec![0.0; channels];
+        for c in 0..channels {
+            // Apply Bus1 FX -> Apply Bus2 FX -> Dry -> Master FX
+            // (Placeholder for actual FX node processing)
+            let master_in = bus1_mix[c] + bus2_mix[c] + dry_mix[c];
+            // Master FX Processing would go here
+            frame_mix[c] = master_in;
+        }
+
         // Apply mix to frame with clipping protection
+        let is_armed = thread_state.resampling_armed.load(Ordering::Relaxed);
         for (c, sample) in frame.iter_mut().enumerate() {
-            *sample = frame_mix[c].clamp(-1.0_f32, 1.0_f32);
+            let out_sample = frame_mix[c].clamp(-1.0_f32, 1.0_f32);
+            *sample = out_sample;
+
+            if is_armed && thread_state.resampling_index < thread_state.resampling_buffer.len() {
+                thread_state.resampling_buffer[thread_state.resampling_index] = out_sample;
+                thread_state.resampling_index += 1;
+            }
         }
     }
 
@@ -146,6 +179,9 @@ mod tests {
             buffers: HashMap::new(),
             active_events: Vec::new(),
             command_rx: consumer,
+            resampling_buffer: vec![0.0; 1024],
+            resampling_index: 0,
+            resampling_armed: state.resampling_armed.clone(),
         };
 
         state.add_buffer(
@@ -165,8 +201,8 @@ mod tests {
             },
         );
 
-        state.trigger_pad(0, None);
-        state.trigger_pad(1, None);
+        state.trigger_pad(0, None, BusRouting::Dry);
+        state.trigger_pad(1, None, BusRouting::Dry);
 
         let mut output = vec![0.0; 4]; // 2 frames of stereo
         write_data(&mut output, 2, 44100, &mut thread_state);
@@ -181,6 +217,9 @@ mod tests {
             buffers: HashMap::new(),
             active_events: Vec::new(),
             command_rx: consumer,
+            resampling_buffer: vec![0.0; 1024],
+            resampling_index: 0,
+            resampling_armed: state.resampling_armed.clone(),
         };
 
         state.add_buffer(
@@ -192,7 +231,7 @@ mod tests {
             },
         );
 
-        state.trigger_pad(0, None);
+        state.trigger_pad(0, None, BusRouting::Dry);
 
         let mut output = vec![0.0; 8]; // 4 frames of stereo
         write_data(&mut output, 2, 44100, &mut thread_state);
@@ -207,6 +246,9 @@ mod tests {
             buffers: HashMap::new(),
             active_events: Vec::new(),
             command_rx: consumer,
+            resampling_buffer: vec![0.0; 1024],
+            resampling_index: 0,
+            resampling_armed: state.resampling_armed.clone(),
         };
 
         state.add_buffer(
@@ -227,7 +269,7 @@ mod tests {
         );
 
         // Trigger pad 0 with mute group 1
-        state.trigger_pad(0, Some(1));
+        state.trigger_pad(0, Some(1), BusRouting::Dry);
         
         let mut output = vec![0.0; 2]; // 1 frame
         write_data(&mut output, 2, 44100, &mut thread_state);
@@ -235,7 +277,7 @@ mod tests {
         assert_eq!(output, vec![1.0, 1.0]);
 
         // Trigger pad 1 with same mute group 1
-        state.trigger_pad(1, Some(1));
+        state.trigger_pad(1, Some(1), BusRouting::Dry);
 
         let mut output2 = vec![0.0; 2]; // next frame
         write_data(&mut output2, 2, 44100, &mut thread_state);

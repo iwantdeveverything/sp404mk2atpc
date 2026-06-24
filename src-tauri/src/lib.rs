@@ -14,15 +14,15 @@ fn load_audio(path: String, pad_id: usize, state: State<'_, AudioState>) -> Resu
 
 #[tauri::command]
 fn trigger_pad(pad_id: usize, state: State<'_, AudioState>) -> Result<(), String> {
-    state.trigger_pad(pad_id);
+    state.trigger_pad(pad_id, None);
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let audio_state = AudioState::new();
+    let (audio_state, consumer) = AudioState::new(1024);
 
-    let stream = audio::engine::start_audio_engine(audio_state.clone())
+    let stream = audio::engine::start_audio_engine(audio_state.clone(), consumer)
         .expect("Failed to start audio engine");
 
     // Leak the stream to keep it alive for the lifetime of the application

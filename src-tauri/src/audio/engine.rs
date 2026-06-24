@@ -1,8 +1,17 @@
-use crate::audio::state::{AudioState, AudioStateInner};
+use crate::audio::state::{AudioBuffer, AudioCommand, AudioState, PlaybackEvent};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
+use rtrb::Consumer;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
+struct AudioEngineThreadState {
+    buffers: HashMap<usize, Arc<AudioBuffer>>,
+    active_events: Vec<PlaybackEvent>,
+    command_rx: Consumer<AudioCommand>,
+}
+
+pub fn start_audio_engine(_state: AudioState, consumer: Consumer<AudioCommand>) -> Result<Stream, String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -15,11 +24,17 @@ pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
+    let mut thread_state = AudioEngineThreadState {
+        buffers: HashMap::new(),
+        active_events: Vec::new(),
+        command_rx: consumer,
+    };
+
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_output_stream(
             stream_config.clone(),
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                write_data(data, channels, sample_rate, &state)
+                write_data(data, channels, sample_rate, &mut thread_state)
             },
             err_fn,
             None,
@@ -33,30 +48,51 @@ pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
     Ok(stream)
 }
 
-fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, state: &AudioState) {
+fn write_data(
+    output: &mut [f32],
+    channels: usize,
+    target_sample_rate: u32,
+    thread_state: &mut AudioEngineThreadState,
+) {
+    // Process commands from UI thread (lock-free)
+    while let Ok(command) = thread_state.command_rx.pop() {
+        match command {
+            AudioCommand::AddBuffer(pad_id, buffer) => {
+                thread_state.buffers.insert(pad_id, buffer);
+            }
+            AudioCommand::TriggerPad { pad_id, mute_group } => {
+                if thread_state.buffers.contains_key(&pad_id) {
+                    // Mute group choking logic
+                    if let Some(mg) = mute_group {
+                        thread_state
+                            .active_events
+                            .retain(|event| event.mute_group != Some(mg));
+                    }
+
+                    thread_state.active_events.push(PlaybackEvent {
+                        pad_id,
+                        position: 0.0,
+                        volume: 1.0,
+                        mute_group,
+                    });
+                }
+            }
+        }
+    }
+
     // Clear the output buffer first
     for sample in output.iter_mut() {
         *sample = 0.0;
     }
 
-    let mut inner = match state.inner.lock() {
-        Ok(guard) => guard,
-        Err(_) => return, // Handle poisoned mutex gracefully in the audio thread
-    };
-
     let mut finished_events = Vec::new();
-
-    let AudioStateInner {
-        buffers,
-        active_events,
-    } = &mut *inner;
 
     // The output buffer is interleaved: [L, R, L, R, ...]
     for frame in output.chunks_mut(channels) {
         let mut frame_mix = vec![0.0; channels];
 
-        for (i, event) in active_events.iter_mut().enumerate() {
-            if let Some(buffer) = buffers.get(&event.pad_id) {
+        for (i, event) in thread_state.active_events.iter_mut().enumerate() {
+            if let Some(buffer) = thread_state.buffers.get(&event.pad_id) {
                 let ratio = buffer.sample_rate as f32 / target_sample_rate as f32;
                 let index_f = event.position;
                 let index = index_f as usize;
@@ -92,8 +128,8 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
     finished_events.sort_unstable_by(|a, b| b.cmp(a));
     finished_events.dedup();
     for i in finished_events {
-        if i < active_events.len() {
-            active_events.remove(i);
+        if i < thread_state.active_events.len() {
+            thread_state.active_events.remove(i);
         }
     }
 }
@@ -105,7 +141,13 @@ mod tests {
 
     #[test]
     fn test_write_data_mixing() {
-        let state = AudioState::new();
+        let (state, consumer) = AudioState::new(1024);
+        let mut thread_state = AudioEngineThreadState {
+            buffers: HashMap::new(),
+            active_events: Vec::new(),
+            command_rx: consumer,
+        };
+
         state.add_buffer(
             0,
             AudioBuffer {
@@ -123,18 +165,24 @@ mod tests {
             },
         );
 
-        state.trigger_pad(0);
-        state.trigger_pad(1);
+        state.trigger_pad(0, None);
+        state.trigger_pad(1, None);
 
         let mut output = vec![0.0; 4]; // 2 frames of stereo
-        write_data(&mut output, 2, 44100, &state);
+        write_data(&mut output, 2, 44100, &mut thread_state);
 
         assert_eq!(output, vec![0.5, 0.5, 0.5, 0.5]);
     }
 
     #[test]
     fn test_write_data_resampling() {
-        let state = AudioState::new();
+        let (state, consumer) = AudioState::new(1024);
+        let mut thread_state = AudioEngineThreadState {
+            buffers: HashMap::new(),
+            active_events: Vec::new(),
+            command_rx: consumer,
+        };
+
         state.add_buffer(
             0,
             AudioBuffer {
@@ -144,16 +192,55 @@ mod tests {
             },
         );
 
-        state.trigger_pad(0);
+        state.trigger_pad(0, None);
 
         let mut output = vec![0.0; 8]; // 4 frames of stereo
-        write_data(&mut output, 2, 44100, &state);
+        write_data(&mut output, 2, 44100, &mut thread_state);
 
-        // Ratio is 0.5.
-        // Frame 1: index 0 (int 0) -> buffer[0] -> 0.1
-        // Frame 2: index 0.5 (int 0) -> buffer[0] -> 0.1
-        // Frame 3: index 1.0 (int 1) -> buffer[1] -> 0.2
-        // Frame 4: index 1.5 (int 1) -> buffer[1] -> 0.2
         assert_eq!(output, vec![0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2]);
+    }
+
+    #[test]
+    fn test_mute_group_choking() {
+        let (state, consumer) = AudioState::new(1024);
+        let mut thread_state = AudioEngineThreadState {
+            buffers: HashMap::new(),
+            active_events: Vec::new(),
+            command_rx: consumer,
+        };
+
+        state.add_buffer(
+            0,
+            AudioBuffer {
+                samples: vec![1.0, 1.0, 1.0, 1.0],
+                channels: 1,
+                sample_rate: 44100,
+            },
+        );
+        state.add_buffer(
+            1,
+            AudioBuffer {
+                samples: vec![0.5, 0.5, 0.5, 0.5],
+                channels: 1,
+                sample_rate: 44100,
+            },
+        );
+
+        // Trigger pad 0 with mute group 1
+        state.trigger_pad(0, Some(1));
+        
+        let mut output = vec![0.0; 2]; // 1 frame
+        write_data(&mut output, 2, 44100, &mut thread_state);
+        // It plays pad 0 (1.0)
+        assert_eq!(output, vec![1.0, 1.0]);
+
+        // Trigger pad 1 with same mute group 1
+        state.trigger_pad(1, Some(1));
+
+        let mut output2 = vec![0.0; 2]; // next frame
+        write_data(&mut output2, 2, 44100, &mut thread_state);
+        
+        // Pad 0 should be choked, only Pad 1 plays (0.5)
+        assert_eq!(output2, vec![0.5, 0.5]);
     }
 }

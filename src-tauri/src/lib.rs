@@ -18,6 +18,18 @@ fn trigger_pad(pad_id: usize, state: State<'_, AudioState>) -> Result<(), String
     Ok(())
 }
 
+#[tauri::command]
+fn set_resampling(state: bool) -> Result<(), String> {
+    println!("Resampling state set to: {}", state);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_pad_bus(pad: usize, bus: String) -> Result<(), String> {
+    println!("Pad {} routed to {}", pad, bus);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (audio_state, consumer) = AudioState::new(1024);
@@ -32,7 +44,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(audio_state)
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad])
+        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad, set_resampling, set_pad_bus])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

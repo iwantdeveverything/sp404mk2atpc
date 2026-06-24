@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 // Define the keys mapping to pads 0-15
 // Top row: 1 2 3 4
@@ -93,6 +94,55 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       console.error("Error loading audio:", err);
       if (statusDisplay) statusDisplay.innerText = "LOAD ERROR";
+    }
+  });
+
+  // Handle native drag and drop
+  getCurrentWebview().onDragDropEvent(async (event) => {
+    if (event.payload.type === 'over') {
+      const { position } = event.payload;
+      const el = document.elementFromPoint(position.x, position.y);
+      const padEl = el?.closest('.pad');
+      pads.forEach(p => p.classList.toggle('drag-hover', p === padEl));
+    } else if (event.payload.type === 'leave' || event.payload.type === 'cancel') {
+      pads.forEach(p => p.classList.remove('drag-hover'));
+      if (statusDisplay && statusDisplay.innerText === "INVALID FORMAT") {
+        statusDisplay.innerText = "";
+      }
+    } else if (event.payload.type === 'drop') {
+      pads.forEach(p => p.classList.remove('drag-hover'));
+      const { paths, position } = event.payload;
+      const el = document.elementFromPoint(position.x, position.y);
+      const padEl = el?.closest('.pad');
+      if (!padEl) return;
+
+      const startPadId = parseInt((padEl as HTMLElement).dataset.pad || "0", 10);
+      const validExtensions = ['.wav', '.mp3'];
+      
+      const validPaths = paths.filter(path => {
+        const ext = path.substring(path.lastIndexOf('.')).toLowerCase();
+        return validExtensions.includes(ext);
+      });
+
+      if (validPaths.length !== paths.length) {
+        if (statusDisplay) statusDisplay.innerText = "INVALID FORMAT";
+        if (validPaths.length === 0) return;
+      }
+
+      if (statusDisplay) statusDisplay.innerText = "LOADING...";
+
+      for (let i = 0; i < validPaths.length; i++) {
+        const currentPadId = startPadId + i;
+        if (currentPadId > 15) break;
+        
+        try {
+          await invoke("load_audio", { path: validPaths[i], padId: currentPadId });
+          if (statusDisplay) statusDisplay.innerText = `LOADED PAD ${currentPadId + 1}`;
+        } catch (err) {
+          console.error(`Error loading audio for pad ${currentPadId}:`, err);
+          if (statusDisplay) statusDisplay.innerText = "LOAD ERROR";
+        }
+      }
     }
   });
 });

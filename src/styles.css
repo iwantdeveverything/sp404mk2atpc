@@ -191,3 +191,10 @@ body {
   background: #4ade80;
   box-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
 }
+
+/* Drag hover state */
+.pad.drag-hover {
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
+  background: linear-gradient(145deg, #3d4356, #2d313f);
+}

@@ -47,10 +47,10 @@ Chain strategy: pending
 
 ## Phase 4: UI Integration
 
-- [ ] 4.1 Update `src/index.html` with pad grid layout and load button.
-- [ ] 4.2 Write `src/styles.css` for SP-404 style visual feedback (active states).
-- [ ] 4.3 Update `src/main.ts` to attach click/keyboard events that invoke `trigger_pad`.
-- [ ] 4.4 Add file picker logic invoking `load_audio` and updating the UI state.
+- [x] 4.1 Update `src/index.html` with pad grid layout and load button.
+- [x] 4.2 Write `src/styles.css` for SP-404 style visual feedback (active states).
+- [x] 4.3 Update `src/main.ts` to attach click/keyboard events that invoke `trigger_pad`.
+- [x] 4.4 Add file picker logic invoking `load_audio` and updating the UI state.
 
 ## Phase 5: Testing
 

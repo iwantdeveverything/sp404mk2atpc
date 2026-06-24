@@ -1,9 +1,9 @@
 pub mod audio;
 pub mod fs;
 
-use tauri::State;
-use std::path::Path;
 use audio::state::AudioState;
+use std::path::Path;
+use tauri::State;
 
 #[tauri::command]
 fn load_audio(path: String, pad_id: usize, state: State<'_, AudioState>) -> Result<(), String> {
@@ -21,14 +21,15 @@ fn trigger_pad(pad_id: usize, state: State<'_, AudioState>) -> Result<(), String
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let audio_state = AudioState::new();
-    
+
     let stream = audio::engine::start_audio_engine(audio_state.clone())
         .expect("Failed to start audio engine");
-    
+
     // Leak the stream to keep it alive for the lifetime of the application
     Box::leak(Box::new(stream));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(audio_state)
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![load_audio, trigger_pad])

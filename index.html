@@ -4,10 +4,51 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SP-404MK2 DAW</title>
+    <!-- Google Fonts for modern typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=VT323&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="device-shell">
+        <header class="device-header">
+          <div class="logo">SP-404MK2 <span>DAW</span></div>
+          <div class="lcd-screen">
+            <div class="lcd-text" id="status-display">WAITING FOR AUDIO</div>
+            <div class="controls">
+              <button id="audio-upload-btn" class="upload-btn">
+                LOAD SAMPLE
+              </button>
+              <div class="selected-pad-display">TARGET PAD: <span id="target-pad">0</span></div>
+            </div>
+          </div>
+        </header>
+        
+        <main class="pad-section">
+          <div class="pad-grid">
+            <!-- 16 Pads -->
+            <button class="pad" data-pad="0"><span class="pad-label">1</span></button>
+            <button class="pad" data-pad="1"><span class="pad-label">2</span></button>
+            <button class="pad" data-pad="2"><span class="pad-label">3</span></button>
+            <button class="pad" data-pad="3"><span class="pad-label">4</span></button>
+            <button class="pad" data-pad="4"><span class="pad-label">5</span></button>
+            <button class="pad" data-pad="5"><span class="pad-label">6</span></button>
+            <button class="pad" data-pad="6"><span class="pad-label">7</span></button>
+            <button class="pad" data-pad="7"><span class="pad-label">8</span></button>
+            <button class="pad" data-pad="8"><span class="pad-label">9</span></button>
+            <button class="pad" data-pad="9"><span class="pad-label">10</span></button>
+            <button class="pad" data-pad="10"><span class="pad-label">11</span></button>
+            <button class="pad" data-pad="11"><span class="pad-label">12</span></button>
+            <button class="pad" data-pad="12"><span class="pad-label">13</span></button>
+            <button class="pad" data-pad="13"><span class="pad-label">14</span></button>
+            <button class="pad" data-pad="14"><span class="pad-label">15</span></button>
+            <button class="pad" data-pad="15"><span class="pad-label">16</span></button>
+          </div>
+        </main>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

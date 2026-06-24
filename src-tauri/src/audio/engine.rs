@@ -1,10 +1,12 @@
+use crate::audio::state::{AudioState, AudioStateInner};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
-use crate::audio::state::{AudioState, AudioStateInner};
 
 pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("No output device available")?;
+    let device = host
+        .default_output_device()
+        .ok_or("No output device available")?;
     let config = device.default_output_config().map_err(|e| e.to_string())?;
 
     let stream_config: StreamConfig = config.clone().into();
@@ -14,18 +16,17 @@ pub fn start_audio_engine(state: AudioState) -> Result<Stream, String> {
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => {
-            device.build_output_stream(
-                stream_config.clone(),
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    write_data(data, channels, sample_rate, &state)
-                },
-                err_fn,
-                None,
-            )
-        },
+        cpal::SampleFormat::F32 => device.build_output_stream(
+            stream_config.clone(),
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                write_data(data, channels, sample_rate, &state)
+            },
+            err_fn,
+            None,
+        ),
         _ => return Err("Unsupported sample format".to_string()),
-    }.map_err(|e| e.to_string())?;
+    }
+    .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
 
@@ -45,7 +46,10 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
 
     let mut finished_events = Vec::new();
 
-    let AudioStateInner { buffers, active_events } = &mut *inner;
+    let AudioStateInner {
+        buffers,
+        active_events,
+    } = &mut *inner;
 
     // The output buffer is interleaved: [L, R, L, R, ...]
     for frame in output.chunks_mut(channels) {
@@ -66,7 +70,7 @@ fn write_data(output: &mut [f32], channels: usize, target_sample_rate: u32, stat
                 for c in 0..channels {
                     let source_c = if c < buffer.channels as usize { c } else { 0 }; // Mono to stereo fallback
                     let sample_idx = index * (buffer.channels as usize) + source_c;
-                    
+
                     if sample_idx < buffer.samples.len() {
                         frame_mix[c] += buffer.samples[sample_idx] * event.volume;
                     }

@@ -26,4 +26,5 @@ cpal = "0.18.1"
 hound = "3.5.1"
 minimp3 = "0.6.1"
 tauri-plugin-dialog = "2"
+rtrb = "0.3.4"
 

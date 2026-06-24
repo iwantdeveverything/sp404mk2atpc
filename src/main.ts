@@ -16,6 +16,29 @@ const keyMap: Record<string, number> = {
 
 let currentTargetPad = 0;
 
+let isBooting = false;
+
+let typingTimeout: number | undefined;
+
+const typeText = async (element: HTMLElement, text: string, speedMs = 20): Promise<void> => {
+  return new Promise(resolve => {
+    if (typingTimeout) clearTimeout(typingTimeout);
+    element.innerText = "";
+    let i = 0;
+    
+    const typeNext = () => {
+      if (i < text.length) {
+        element.innerText += text.charAt(i);
+        i++;
+        typingTimeout = window.setTimeout(typeNext, speedMs);
+      } else {
+        resolve();
+      }
+    };
+    typeNext();
+  });
+};
+
 const formatDropMessage = (count: number, startPad: number, endPad: number): string => {
   if (count === 1) {
     return `LOADED 1 IN PAD ${startPad + 1}`;
@@ -41,6 +64,18 @@ window.addEventListener("DOMContentLoaded", () => {
   const targetPadDisplay = document.getElementById("target-pad");
   const statusDisplay = document.getElementById("status-display");
 
+  const runBootSequence = async () => {
+    isBooting = true;
+    if (statusDisplay) statusDisplay.innerText = "";
+    await new Promise(r => setTimeout(r, 300));
+    if (statusDisplay) await typeText(statusDisplay, "INIT AUDIO...", 40);
+    await new Promise(r => setTimeout(r, 600));
+    if (statusDisplay) await typeText(statusDisplay, "READY", 40);
+    isBooting = false;
+  };
+
+  runBootSequence();
+
   // Function to highlight a pad briefly
   const animatePad = (padId: number) => {
     const padEl = document.querySelector(`[data-pad="${padId}"]`);
@@ -52,13 +87,14 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Trigger Pad function
   const triggerPad = async (padId: number) => {
+    if (isBooting) return;
     animatePad(padId);
-    if (statusDisplay) statusDisplay.innerText = `PLAYING PAD ${padId + 1}`;
+    if (statusDisplay) typeText(statusDisplay, `PLAYING PAD ${padId + 1}`, 10);
     try {
       await invoke("trigger_pad", { padId });
     } catch (err) {
       console.error("Error triggering pad:", err);
-      if (statusDisplay) statusDisplay.innerText = `ERROR PAD ${padId + 1}`;
+      if (statusDisplay) typeText(statusDisplay, `ERROR PAD ${padId + 1}`, 10);
     }
   };
 
@@ -72,6 +108,7 @@ window.addEventListener("DOMContentLoaded", () => {
     // Right click to set as target pad for loading
     pad.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      if (isBooting) return;
       const padId = parseInt(pad.dataset.pad || "0", 10);
       currentTargetPad = padId;
       if (targetPadDisplay) targetPadDisplay.innerText = (padId + 1).toString();
@@ -80,12 +117,13 @@ window.addEventListener("DOMContentLoaded", () => {
       pad.classList.add("target");
       setTimeout(() => pad.classList.remove("target"), 300);
       
-      if (statusDisplay) statusDisplay.innerText = `TARGET PAD ${padId + 1}`;
+      if (statusDisplay) typeText(statusDisplay, `TARGET PAD ${padId + 1}`, 10);
     });
   });
 
   // Handle keyboard
   window.addEventListener("keydown", (e) => {
+    if (isBooting) return;
     if (e.repeat) return; // Ignore hold
     const padId = keyMap[e.key.toLowerCase()];
     if (padId !== undefined) {
@@ -95,6 +133,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Handle file load via Tauri dialog plugin
   uploadBtn?.addEventListener("click", async () => {
+    if (isBooting) return;
     try {
       const file = await open({
         multiple: false,
@@ -106,18 +145,19 @@ window.addEventListener("DOMContentLoaded", () => {
 
       if (!file) return; // User cancelled
 
-      if (statusDisplay) statusDisplay.innerText = "LOADING...";
+      if (statusDisplay) typeText(statusDisplay, "LOADING...", 10);
       
       await invoke("load_audio", { path: file, padId: currentTargetPad });
-      if (statusDisplay) statusDisplay.innerText = `LOADED PAD ${currentTargetPad + 1}`;
+      if (statusDisplay) typeText(statusDisplay, `LOADED PAD ${currentTargetPad + 1}`, 10);
     } catch (err) {
       console.error("Error loading audio:", err);
-      if (statusDisplay) statusDisplay.innerText = "LOAD ERROR";
+      if (statusDisplay) typeText(statusDisplay, "LOAD ERROR", 10);
     }
   });
 
   // Handle native drag and drop
   getCurrentWebview().onDragDropEvent(async (event) => {
+    if (isBooting) return;
     if (event.payload.type === 'over') {
       const { position } = event.payload;
       const el = document.elementFromPoint(position.x, position.y);
@@ -144,11 +184,11 @@ window.addEventListener("DOMContentLoaded", () => {
       });
 
       if (validPaths.length !== paths.length) {
-        if (statusDisplay) statusDisplay.innerText = "INVALID FORMAT";
+        if (statusDisplay) typeText(statusDisplay, "INVALID FORMAT", 10);
         if (validPaths.length === 0) return;
       }
 
-      if (statusDisplay) statusDisplay.innerText = "LOADING...";
+      if (statusDisplay) typeText(statusDisplay, "LOADING...", 10);
 
       const loadedIndices: number[] = [];
 
@@ -161,14 +201,14 @@ window.addEventListener("DOMContentLoaded", () => {
           loadedIndices.push(currentPadId);
         } catch (err) {
           console.error(`Error loading audio for pad ${currentPadId}:`, err);
-          if (statusDisplay) statusDisplay.innerText = "LOAD ERROR";
+          if (statusDisplay) typeText(statusDisplay, "LOAD ERROR", 10);
         }
       }
 
       if (loadedIndices.length > 0) {
         const endPadId = loadedIndices[loadedIndices.length - 1];
         if (statusDisplay) {
-          statusDisplay.innerText = formatDropMessage(loadedIndices.length, startPadId, endPadId);
+          typeText(statusDisplay, formatDropMessage(loadedIndices.length, startPadId, endPadId), 10);
         }
         playCascadeAnimation(loadedIndices);
         

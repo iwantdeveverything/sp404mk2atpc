@@ -65,6 +65,24 @@ fn set_effect_param(bus: String, slot: usize, param_id: u8, value: f32, state: S
     Ok(())
 }
 
+#[tauri::command]
+fn remove_bus_effect(bus: String, slot: usize, state: State<'_, AudioState>) -> Result<(), String> {
+    let bus_enum = match bus.as_str() {
+        "Bus1" => audio::state::BusRouting::Bus1,
+        "Bus2" => audio::state::BusRouting::Bus2,
+        "Dry" => audio::state::BusRouting::Dry,
+        _ => return Err("Invalid bus".to_string()),
+    };
+    state.remove_bus_effect(bus_enum, slot);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_tempo(bpm: f32, state: State<'_, AudioState>) -> Result<(), String> {
+    state.set_tempo(bpm);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (audio_state, consumer) = AudioState::new(1024);
@@ -79,7 +97,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(audio_state)
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad, set_resampling, set_pad_bus, set_bus_effect, set_effect_param])
+        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad, set_resampling, set_pad_bus, set_bus_effect, set_effect_param, remove_bus_effect, set_tempo])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

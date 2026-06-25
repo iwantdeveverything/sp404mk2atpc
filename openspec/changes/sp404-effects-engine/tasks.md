@@ -26,6 +26,6 @@
 - [x] `src-tauri/src/audio/engine.rs` - Distribute tempo updates via `AudioCommand` to sync effects.
 
 ## Phase 5: Complete Catalog & Persistence
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Implement the remaining 29 standard MFX effects.
-- [ ] `src-tauri/src/audio/state.rs` - Add serialization traits to effect state structs.
-- [ ] `src-tauri/src/audio/engine.rs` - Wire serialization to persist and load FX configs on app restart.
+- [x] `src-tauri/src/audio/effects/mod.rs` - Implement the remaining 29 standard MFX effects.
+- [x] `src-tauri/src/audio/state.rs` - Add serialization traits to effect state structs.
+- [x] `src-tauri/src/audio/engine.rs` - Wire serialization to persist and load FX configs on app restart.

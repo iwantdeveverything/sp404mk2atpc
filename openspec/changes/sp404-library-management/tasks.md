@@ -14,9 +14,9 @@
 
 ## PR 2: Pre-listen Audio Engine (Rust `audio-core`)
 *Target branch: `feature/sp404-library-management-2-prelisten` (stacked on PR 1)*
-- [ ] Create an independent audio playback channel in the Rust backend (`fundsp` / `cpal`).
-- [ ] Hardcode the routing for this channel to mix directly into the final output, explicitly bypassing the main FX bus and BPM sync engine.
-- [ ] Expose an IPC command `pre_listen_start(path: String)` that loads and plays the raw audio through this new channel.
+- [x] Create an independent audio playback channel in the Rust backend (`fundsp` / `cpal`).
+- [x] Hardcode the routing for this channel to mix directly into the final output, explicitly bypassing the main FX bus and BPM sync engine.
+- [x] Expose an IPC command `pre_listen_start(path: String)` that loads and plays the raw audio through this new channel.
 
 ## PR 3: UI - File Browser & Canvas Waveform (Frontend)
 *Target branch: `feature/sp404-library-management-3-browser` (stacked on PR 2)*

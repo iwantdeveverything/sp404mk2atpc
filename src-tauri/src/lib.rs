@@ -13,6 +13,13 @@ fn load_audio(path: String, pad_id: usize, state: State<'_, AudioState>) -> Resu
 }
 
 #[tauri::command]
+fn pre_listen_start(path: String, state: State<'_, AudioState>) -> Result<(), String> {
+    let audio_buffer = fs::audio::load_file(Path::new(&path))?;
+    state.pre_listen(audio_buffer);
+    Ok(())
+}
+
+#[tauri::command]
 fn trigger_pad(pad_id: usize, state: State<'_, AudioState>) -> Result<(), String> {
     state.trigger_pad(pad_id, None, audio::state::BusRouting::Dry);
     Ok(())
@@ -109,6 +116,7 @@ pub fn run() {
             set_effect_param, 
             remove_bus_effect, 
             set_tempo,
+            pre_listen_start,
             fs::project::list_directory,
             fs::project::ingest_sample_to_project,
             fs::project::save_project_state

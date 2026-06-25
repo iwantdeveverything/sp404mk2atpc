@@ -92,12 +92,27 @@ pub fn run() {
 
     // Leak the stream to keep it alive for the lifetime of the application
     Box::leak(Box::new(stream));
+    
+    let auto_save_engine = fs::project::AutoSaveEngine::new();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(audio_state)
+        .manage(auto_save_engine)
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad, set_resampling, set_pad_bus, set_bus_effect, set_effect_param, remove_bus_effect, set_tempo])
+        .invoke_handler(tauri::generate_handler![
+            load_audio, 
+            trigger_pad, 
+            set_resampling, 
+            set_pad_bus, 
+            set_bus_effect, 
+            set_effect_param, 
+            remove_bus_effect, 
+            set_tempo,
+            fs::project::list_directory,
+            fs::project::ingest_sample_to_project,
+            fs::project::save_project_state
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

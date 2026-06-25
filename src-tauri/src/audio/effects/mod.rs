@@ -6,6 +6,7 @@ pub trait Effect: Send + Sync {
     fn set_parameter(&mut self, param_id: u8, value: f32);
     fn reset(&mut self);
     fn set_sample_rate(&mut self, rate: u32);
+    fn set_tempo(&mut self, _bpm: f32) {}
 }
 
 pub struct EffectChain {
@@ -26,6 +27,14 @@ impl EffectChain {
             }
         }
     }
+
+    pub fn set_tempo(&mut self, bpm: f32) {
+        for slot in self.slots.iter_mut() {
+            if let Some(effect) = slot {
+                effect.set_tempo(bpm);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -43,6 +52,7 @@ pub enum EffectType {
 pub struct FunDspWrapper {
     node: Box<dyn AudioUnit + Send + Sync>,
     params: Vec<Shared>,
+    tempo_param: Option<Shared>,
 }
 
 impl Effect for FunDspWrapper {
@@ -67,11 +77,21 @@ impl Effect for FunDspWrapper {
     fn set_sample_rate(&mut self, rate: u32) {
         self.node.set_sample_rate(rate as f64);
     }
+
+    fn set_tempo(&mut self, bpm: f32) {
+        if let Some(t) = &self.tempo_param {
+            t.set_value(bpm);
+        }
+    }
 }
 
 impl FunDspWrapper {
     pub fn new(node: Box<dyn AudioUnit + Send + Sync>, params: Vec<Shared>) -> Self {
-        Self { node, params }
+        Self { node, params, tempo_param: None }
+    }
+
+    pub fn new_with_tempo(node: Box<dyn AudioUnit + Send + Sync>, params: Vec<Shared>, tempo_param: Shared) -> Self {
+        Self { node, params, tempo_param: Some(tempo_param) }
     }
 }
 
@@ -109,6 +129,36 @@ pub fn create_effect(effect_type: EffectType) -> Option<Box<dyn Effect>> {
             let node = vinyl_ch() | vinyl_ch();
             Some(Box::new(FunDspWrapper::new(Box::new(node), vec![noise])))
         }
+        EffectType::DjfxLooper => {
+            let bpm = shared(120.0);
+            let depth = shared(0.5); // Feedback amount
+            let b1 = bpm.clone();
+            let b2 = bpm.clone();
+            let d1 = depth.clone();
+            let d2 = depth.clone();
+            let ch1 = pass() & (pass() | (var(&b1) >> map(|b| 60.0 / b[0].max(40.0)))) >> tap(0.0, 2.0) * var(&d1);
+            let ch2 = pass() & (pass() | (var(&b2) >> map(|b| 60.0 / b[0].max(40.0)))) >> tap(0.0, 2.0) * var(&d2);
+            let node = ch1 | ch2;
+            Some(Box::new(FunDspWrapper::new_with_tempo(Box::new(node), vec![depth], bpm)))
+        }
+        EffectType::Scatter => {
+            let bpm = shared(120.0);
+            let b1 = bpm.clone();
+            let b2 = bpm.clone();
+            let ch1 = pass() * ((var(&b1) >> map(|b| b[0] / 60.0 * 4.0)) >> square() >> map(|x| if x[0] > 0.0 { 1.0 } else { 0.0 }));
+            let ch2 = pass() * ((var(&b2) >> map(|b| b[0] / 60.0 * 4.0)) >> square() >> map(|x| if x[0] > 0.0 { 1.0 } else { 0.0 }));
+            let node = ch1 | ch2;
+            Some(Box::new(FunDspWrapper::new_with_tempo(Box::new(node), vec![], bpm)))
+        }
+        EffectType::Slicer => {
+            let bpm = shared(120.0);
+            let b1 = bpm.clone();
+            let b2 = bpm.clone();
+            let ch1 = pass() * ((var(&b1) >> map(|b| b[0] / 60.0 * 2.0)) >> square() >> map(|x| if x[0] > 0.0 { 1.0 } else { 0.0 }));
+            let ch2 = pass() * ((var(&b2) >> map(|b| b[0] / 60.0 * 2.0)) >> square() >> map(|x| if x[0] > 0.0 { 1.0 } else { 0.0 }));
+            let node = ch1 | ch2;
+            Some(Box::new(FunDspWrapper::new_with_tempo(Box::new(node), vec![], bpm)))
+        }
         _ => None,
     }
 }
@@ -126,6 +176,9 @@ mod tests {
             EffectType::Delay,
             EffectType::Reverb,
             EffectType::VinylSim,
+            EffectType::DjfxLooper,
+            EffectType::Scatter,
+            EffectType::Slicer,
         ];
 
         for &eff_type in &effect_types {

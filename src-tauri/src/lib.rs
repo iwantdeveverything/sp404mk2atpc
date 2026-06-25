@@ -77,6 +77,12 @@ fn remove_bus_effect(bus: String, slot: usize, state: State<'_, AudioState>) -> 
     Ok(())
 }
 
+#[tauri::command]
+fn set_tempo(bpm: f32, state: State<'_, AudioState>) -> Result<(), String> {
+    state.set_tempo(bpm);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (audio_state, consumer) = AudioState::new(1024);
@@ -91,7 +97,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(audio_state)
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad, set_resampling, set_pad_bus, set_bus_effect, set_effect_param, remove_bus_effect])
+        .invoke_handler(tauri::generate_handler![load_audio, trigger_pad, set_resampling, set_pad_bus, set_bus_effect, set_effect_param, remove_bus_effect, set_tempo])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

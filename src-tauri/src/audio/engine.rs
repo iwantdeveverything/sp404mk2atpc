@@ -105,7 +105,11 @@ fn write_data(
                 };
                 if let Some(chain) = chain {
                     if slot < chain.slots.len() {
-                        chain.slots[slot] = crate::audio::effects::create_effect(effect);
+                        let mut new_fx = crate::audio::effects::create_effect(effect);
+                        if let Some(fx) = &mut new_fx {
+                            fx.set_tempo(thread_state.tempo);
+                        }
+                        chain.slots[slot] = new_fx;
                     }
                 }
             }
@@ -137,6 +141,9 @@ fn write_data(
             }
             AudioCommand::SetTempo { bpm } => {
                 thread_state.tempo = bpm;
+                thread_state.bus1_fx.set_tempo(bpm);
+                thread_state.bus2_fx.set_tempo(bpm);
+                thread_state.master_fx.set_tempo(bpm);
             }
         }
     }

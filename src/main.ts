@@ -386,4 +386,55 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+
+  // Tap Tempo & BPM Logic
+  const tapBtn = document.getElementById("tap-btn");
+  const bpmInput = document.getElementById("bpm-input") as HTMLInputElement;
+  let tapTimes: number[] = [];
+  const TAP_TIMEOUT = 2000; // Reset taps after 2 seconds
+
+  const updateBpm = async (newBpm: number) => {
+    newBpm = Math.max(40, Math.min(300, newBpm));
+    if (bpmInput) bpmInput.value = newBpm.toFixed(1);
+    try {
+      await invoke("set_tempo", { bpm: newBpm });
+    } catch (err) {
+      console.error("Error setting tempo:", err);
+    }
+  };
+
+  tapBtn?.addEventListener("click", () => {
+    const now = performance.now();
+    
+    // Clear old taps
+    tapTimes = tapTimes.filter(t => now - t < TAP_TIMEOUT);
+    tapTimes.push(now);
+
+    tapBtn.classList.add("active");
+    setTimeout(() => tapBtn.classList.remove("active"), 100);
+
+    if (tapTimes.length >= 2) {
+      // Calculate average interval
+      let totalInterval = 0;
+      for (let i = 1; i < tapTimes.length; i++) {
+        totalInterval += (tapTimes[i] - tapTimes[i - 1]);
+      }
+      const avgInterval = totalInterval / (tapTimes.length - 1);
+      const bpm = 60000 / avgInterval;
+      updateBpm(bpm);
+    }
+  });
+
+  bpmInput?.addEventListener("change", () => {
+    const val = parseFloat(bpmInput.value);
+    if (!isNaN(val)) {
+      updateBpm(val);
+    }
+  });
+
+  // Initial BPM set
+  if (bpmInput) {
+    updateBpm(parseFloat(bpmInput.value) || 120.0);
+  }
+
 });

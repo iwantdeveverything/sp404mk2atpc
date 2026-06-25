@@ -318,6 +318,73 @@ body {
   transform: translateY(1px);
 }
 
+/* BPM UI */
+.bpm-ui {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(26, 28, 35, 0.4);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tap-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 16px;
+  width: auto;
+  font-family: 'VT323', monospace;
+  background: rgba(74, 222, 128, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.tap-btn:hover {
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.tap-btn:active, .tap-btn.active {
+  background: var(--accent);
+  color: #13141a;
+  transform: scale(0.95);
+}
+
+.bpm-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+#bpm-input {
+  background: transparent;
+  border: none;
+  color: var(--lcd-text);
+  font-family: 'VT323', monospace;
+  font-size: 24px;
+  width: 50px;
+  text-align: right;
+  outline: none;
+}
+
+/* Hide number input arrows */
+#bpm-input::-webkit-outer-spin-button,
+#bpm-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+#bpm-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+.bpm-label {
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 .effect-grid {
   position: absolute;
   top: calc(100% + 8px);

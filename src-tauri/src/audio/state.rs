@@ -86,4 +86,10 @@ impl AudioState {
             let _ = tx.push(AudioCommand::RemoveBusEffect { bus, slot });
         }
     }
+
+    pub fn set_tempo(&self, bpm: f32) {
+        if let Ok(mut tx) = self.command_tx.lock() {
+            let _ = tx.push(AudioCommand::SetTempo { bpm });
+        }
+    }
 }

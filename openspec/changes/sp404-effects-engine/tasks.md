@@ -21,9 +21,9 @@
 - [x] `src/styles.css` - Add styling for knobs, effect selector, and parameter display.
 
 ## Phase 4: BPM & Beat Sync
-- [ ] `src/main.ts` - Implement manual/tap BPM input and wire to `SetTempo` command.
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Build beat-synced effects: DJFX Looper, Scatter, Slicer.
-- [ ] `src-tauri/src/audio/engine.rs` - Distribute tempo updates via `AudioCommand` to sync effects.
+- [x] `src/main.ts` - Implement manual/tap BPM input and wire to `SetTempo` command.
+- [x] `src-tauri/src/audio/effects/mod.rs` - Build beat-synced effects: DJFX Looper, Scatter, Slicer.
+- [x] `src-tauri/src/audio/engine.rs` - Distribute tempo updates via `AudioCommand` to sync effects.
 
 ## Phase 5: Complete Catalog & Persistence
 - [ ] `src-tauri/src/audio/effects/mod.rs` - Implement the remaining 29 standard MFX effects.

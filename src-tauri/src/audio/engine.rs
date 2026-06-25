@@ -13,6 +13,7 @@ const RESAMPLE_BUFFER_SIZE: usize = 48000 * 2 * 60 * 5; // 5 minutes stereo 48k
 struct AudioEngineThreadState {
     buffers: HashMap<usize, Arc<AudioBuffer>>,
     active_events: Vec<PlaybackEvent>,
+    pre_listen_event: Option<(Arc<AudioBuffer>, f32)>, // buffer, position
     command_rx: Consumer<AudioCommand>,
     resampling_buffer: Vec<f32>,
     resampling_index: usize,
@@ -67,6 +68,7 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
     let mut thread_state = AudioEngineThreadState {
         buffers: HashMap::new(),
         active_events: Vec::new(),
+        pre_listen_event: None,
         command_rx: consumer,
         resampling_buffer: vec![0.0; RESAMPLE_BUFFER_SIZE],
         resampling_index: 0,
@@ -106,6 +108,9 @@ fn write_data(
         match command {
             AudioCommand::AddBuffer(pad_id, buffer) => {
                 thread_state.buffers.insert(pad_id, buffer);
+            }
+            AudioCommand::PreListen { buffer } => {
+                thread_state.pre_listen_event = Some((buffer, 0.0));
             }
             AudioCommand::TriggerPad { pad_id, mute_group, routing } => {
                 if thread_state.buffers.contains_key(&pad_id) {
@@ -242,6 +247,30 @@ fn write_data(
                 frame_mix[c] = master_frame[c.min(1)];
             }
 
+            let mut pre_listen_finished = false;
+            if let Some((buffer, position)) = &mut thread_state.pre_listen_event {
+                let ratio = buffer.sample_rate as f32 / target_sample_rate as f32;
+                let index_f = *position;
+                let index = index_f as usize;
+
+                if index * (buffer.channels as usize) >= buffer.samples.len() {
+                    pre_listen_finished = true;
+                } else {
+                    for c in 0..channels {
+                        let source_c = if c < buffer.channels as usize { c } else { 0 };
+                        let sample_idx = index * (buffer.channels as usize) + source_c;
+                        if sample_idx < buffer.samples.len() {
+                            frame_mix[c] += buffer.samples[sample_idx];
+                        }
+                    }
+                    *position += ratio;
+                }
+            }
+            
+            if pre_listen_finished {
+                thread_state.pre_listen_event = None;
+            }
+
             // Apply mix to frame with clipping protection
             let is_armed = thread_state.resampling_armed.load(Ordering::Relaxed);
             for (c, sample) in frame.iter_mut().enumerate() {
@@ -277,6 +306,7 @@ mod tests {
         let mut thread_state = AudioEngineThreadState {
             buffers: HashMap::new(),
             active_events: Vec::new(),
+            pre_listen_event: None,
             command_rx: consumer,
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,
@@ -319,6 +349,7 @@ mod tests {
         let mut thread_state = AudioEngineThreadState {
             buffers: HashMap::new(),
             active_events: Vec::new(),
+            pre_listen_event: None,
             command_rx: consumer,
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,
@@ -352,6 +383,7 @@ mod tests {
         let mut thread_state = AudioEngineThreadState {
             buffers: HashMap::new(),
             active_events: Vec::new(),
+            pre_listen_event: None,
             command_rx: consumer,
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,
@@ -403,6 +435,7 @@ mod tests {
         let mut thread_state = AudioEngineThreadState {
             buffers: HashMap::new(),
             active_events: Vec::new(),
+            pre_listen_event: None,
             command_rx: consumer,
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,

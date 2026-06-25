@@ -10,4 +10,5 @@
 
 ## Current Status
 - PR 1 dependencies and core structures are in place.
-- Ready to proceed to verification or PR 2.
+- PR 2 (Pre-listen Audio Engine) implemented: Independent pre-listen channel created bypassing FX/BPM sync, exposed via `pre_listen_start` IPC command.
+- Ready to proceed to verification or PR 3.

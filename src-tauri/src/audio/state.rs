@@ -75,6 +75,7 @@ pub enum AudioCommand {
         routing: BusRouting,
     },
     AddBuffer(usize, Arc<AudioBuffer>),
+    PreListen { buffer: Arc<AudioBuffer> },
     SetBusEffect { bus: BusRouting, slot: usize, effect: EffectType },
     SetEffectParam { bus: BusRouting, slot: usize, param_id: u8, value: f32 },
     RemoveBusEffect { bus: BusRouting, slot: usize },
@@ -105,6 +106,12 @@ impl AudioState {
     pub fn add_buffer(&self, pad_id: usize, buffer: AudioBuffer) {
         if let Ok(mut tx) = self.command_tx.lock() {
             let _ = tx.push(AudioCommand::AddBuffer(pad_id, Arc::new(buffer)));
+        }
+    }
+
+    pub fn pre_listen(&self, buffer: AudioBuffer) {
+        if let Ok(mut tx) = self.command_tx.lock() {
+            let _ = tx.push(AudioCommand::PreListen { buffer: Arc::new(buffer) });
         }
     }
 

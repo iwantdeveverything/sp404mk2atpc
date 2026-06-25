@@ -20,11 +20,11 @@
 
 ## PR 3: UI - File Browser & Canvas Waveform (Frontend)
 *Target branch: `feature/sp404-library-management-3-browser` (stacked on PR 2)*
-- [ ] Create the frontend File Browser component utilizing the new IPC commands for directory listing and disk access.
-- [ ] Integrate the Native HTML5 Canvas API for waveform rendering (load file, decode with `OfflineAudioContext`, extract peak data).
-- [ ] Render peaks dynamically with Canvas and link `requestAnimationFrame` for a real-time playhead overlay.
-- [ ] Connect the pre-listen IPC command (`pre_listen_start`) to frontend interactions (e.g., hover/select over a sample).
-- [ ] Apply CSS3 hardware-accelerated transitions (using vanilla CSS, no bloated frameworks) for micro-interactions.
+- [x] Create the frontend File Browser component utilizing the new IPC commands for directory listing and disk access.
+- [x] Integrate the Native HTML5 Canvas API for waveform rendering (load file, decode with `OfflineAudioContext`, extract peak data).
+- [x] Render peaks dynamically with Canvas and link `requestAnimationFrame` for a real-time playhead overlay.
+- [x] Connect the pre-listen IPC command (`pre_listen_start`) to frontend interactions (e.g., hover/select over a sample).
+- [x] Apply CSS3 hardware-accelerated transitions (using vanilla CSS, no bloated frameworks) for micro-interactions.
 
 ## PR 4: UI - Drag & Drop and Polish (Frontend)
 *Target branch: `feature/sp404-library-management-4-dnd` (stacked on PR 3)*

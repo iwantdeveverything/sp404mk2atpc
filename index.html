@@ -71,6 +71,7 @@
               <button id="audio-upload-btn" class="upload-btn">
                 LOAD SAMPLE
               </button>
+              <button id="browser-toggle-btn" class="upload-btn">BROWSER</button>
               <div class="selected-pad-display">TARGET PAD: <span id="target-pad">0</span></div>
             </div>
           </div>
@@ -97,6 +98,25 @@
             <button class="pad" data-pad="15"><span class="pad-label">16</span></button>
           </div>
         </main>
+
+        <!-- File Browser Panel -->
+        <div id="file-browser" class="file-browser hidden">
+          <div class="browser-header">
+            <h3>Library</h3>
+            <button id="browser-close-btn" class="glass-btn small">✕</button>
+          </div>
+          <div class="browser-controls">
+            <button id="browser-open-dir" class="glass-btn small">Open Folder</button>
+            <button id="browser-up-dir" class="glass-btn small">↑ Up</button>
+          </div>
+          <div class="browser-path" id="browser-current-path">No folder selected</div>
+          <ul id="browser-file-list" class="file-list"></ul>
+          
+          <div class="waveform-container">
+            <canvas id="waveform-canvas"></canvas>
+            <div class="waveform-overlay"></div>
+          </div>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

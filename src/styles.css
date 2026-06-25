@@ -516,3 +516,160 @@ body {
   color: var(--lcd-text);
   font-weight: bold;
 }
+
+/* File Browser */
+.file-browser {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  background: rgba(26, 28, 35, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0 24px 24px 0;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(0);
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  z-index: 50;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.file-browser.hidden {
+  transform: translateX(110%);
+}
+
+.browser-header {
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.browser-header h3 {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--accent);
+  margin: 0;
+}
+
+.browser-controls {
+  padding: 12px 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.glass-btn.small {
+  padding: 4px 10px;
+  font-size: 13px;
+  width: auto;
+}
+
+.browser-path {
+  font-family: 'VT323', monospace;
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 0 16px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.file-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 8px;
+  margin: 0;
+}
+
+/* Custom Scrollbar for file list */
+.file-list::-webkit-scrollbar {
+  width: 6px;
+}
+.file-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+.file-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.file-item {
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+  font-size: 14px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+  background: transparent;
+}
+
+.file-item:hover, .file-item.active {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--accent);
+}
+
+.file-item.directory {
+  color: #8bb4f7;
+}
+.file-item.directory:hover {
+  background: rgba(139, 180, 247, 0.15);
+}
+
+.file-icon {
+  font-size: 16px;
+  opacity: 0.8;
+}
+
+/* Waveform Canvas */
+.waveform-container {
+  height: 100px;
+  background: #111216;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#waveform-canvas {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.waveform-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.waveform-overlay.active {
+  opacity: 1;
+}
+
+/* Ensure the device shell is relatively positioned for the absolute browser */
+.device-shell {
+  position: relative;
+}

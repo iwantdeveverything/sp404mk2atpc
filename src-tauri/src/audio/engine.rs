@@ -1,4 +1,5 @@
 use crate::audio::state::{AudioBuffer, AudioCommand, AudioState, BusRouting, PlaybackEvent};
+use crate::audio::effects::EffectChain;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
 use rtrb::Consumer;
@@ -15,6 +16,10 @@ struct AudioEngineThreadState {
     resampling_buffer: Vec<f32>,
     resampling_index: usize,
     resampling_armed: Arc<std::sync::atomic::AtomicBool>,
+    bus1_fx: EffectChain,
+    bus2_fx: EffectChain,
+    master_fx: EffectChain,
+    tempo: f32,
 }
 
 pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -> Result<Stream, String> {
@@ -37,6 +42,10 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
         resampling_buffer: vec![0.0; RESAMPLE_BUFFER_SIZE],
         resampling_index: 0,
         resampling_armed: state.resampling_armed,
+        bus1_fx: EffectChain::new(),
+        bus2_fx: EffectChain::new(),
+        master_fx: EffectChain::new(),
+        tempo: 120.0,
     };
 
     let stream = match config.sample_format() {
@@ -87,6 +96,38 @@ fn write_data(
                     });
                 }
             }
+            AudioCommand::SetBusEffect { bus, slot, effect } => {
+                // Instantiation will happen in Phase 2
+            }
+            AudioCommand::SetEffectParam { bus, slot, param_id, value } => {
+                let chain = match bus {
+                    BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
+                    BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
+                    BusRouting::Dry => None,
+                };
+                if let Some(chain) = chain {
+                    if slot < chain.slots.len() {
+                        if let Some(ref mut fx) = chain.slots[slot] {
+                            fx.set_parameter(param_id, value);
+                        }
+                    }
+                }
+            }
+            AudioCommand::RemoveBusEffect { bus, slot } => {
+                let chain = match bus {
+                    BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
+                    BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
+                    BusRouting::Dry => None,
+                };
+                if let Some(chain) = chain {
+                    if slot < chain.slots.len() {
+                        chain.slots[slot] = None;
+                    }
+                }
+            }
+            AudioCommand::SetTempo { bpm } => {
+                thread_state.tempo = bpm;
+            }
         }
     }
 
@@ -135,13 +176,24 @@ fn write_data(
             }
         }
 
+        // Convert to stereo frames for FX processing
+        let mut b1_frame = [bus1_mix[0], if channels > 1 { bus1_mix[1] } else { bus1_mix[0] }];
+        let mut b2_frame = [bus2_mix[0], if channels > 1 { bus2_mix[1] } else { bus2_mix[0] }];
+        let mut dry_frame = [dry_mix[0], if channels > 1 { dry_mix[1] } else { dry_mix[0] }];
+
+        thread_state.bus1_fx.process_frame(&mut b1_frame);
+        thread_state.bus2_fx.process_frame(&mut b2_frame);
+
+        let mut master_frame = [
+            b1_frame[0] + b2_frame[0] + dry_frame[0],
+            b1_frame[1] + b2_frame[1] + dry_frame[1],
+        ];
+
+        thread_state.master_fx.process_frame(&mut master_frame);
+
         let mut frame_mix = vec![0.0; channels];
         for c in 0..channels {
-            // Apply Bus1 FX -> Apply Bus2 FX -> Dry -> Master FX
-            // (Placeholder for actual FX node processing)
-            let master_in = bus1_mix[c] + bus2_mix[c] + dry_mix[c];
-            // Master FX Processing would go here
-            frame_mix[c] = master_in;
+            frame_mix[c] = master_frame[c.min(1)];
         }
 
         // Apply mix to frame with clipping protection
@@ -182,6 +234,10 @@ mod tests {
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,
             resampling_armed: state.resampling_armed.clone(),
+            bus1_fx: EffectChain::new(),
+            bus2_fx: EffectChain::new(),
+            master_fx: EffectChain::new(),
+            tempo: 120.0,
         };
 
         state.add_buffer(
@@ -220,6 +276,10 @@ mod tests {
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,
             resampling_armed: state.resampling_armed.clone(),
+            bus1_fx: EffectChain::new(),
+            bus2_fx: EffectChain::new(),
+            master_fx: EffectChain::new(),
+            tempo: 120.0,
         };
 
         state.add_buffer(
@@ -249,6 +309,10 @@ mod tests {
             resampling_buffer: vec![0.0; 1024],
             resampling_index: 0,
             resampling_armed: state.resampling_armed.clone(),
+            bus1_fx: EffectChain::new(),
+            bus2_fx: EffectChain::new(),
+            master_fx: EffectChain::new(),
+            tempo: 120.0,
         };
 
         state.add_buffer(

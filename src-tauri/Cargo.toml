@@ -28,4 +28,5 @@ minimp3 = "0.6.1"
 tauri-plugin-dialog = "2"
 rtrb = "0.3.4"
 fundsp = "0.18.0"
+assert_no_alloc = "1.1.2"
 

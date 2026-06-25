@@ -11,9 +11,9 @@
 - [x] `src-tauri/src/lib.rs` - Add Tauri commands `set_bus_effect` and `set_effect_param`.
 
 ## Phase 2: Core Effects
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Implement `FunDspEffect` bridge adapter.
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Implement Filter, Isolator, Delay, Reverb, and VinylSim effects.
-- [ ] `src-tauri/src/audio/engine.rs` - Verify bus routing and validate zero-allocation processing (`assert_no_alloc`).
+- [x] `src-tauri/src/audio/effects/mod.rs` - Implement `FunDspEffect` bridge adapter.
+- [x] `src-tauri/src/audio/effects/mod.rs` - Implement Filter, Isolator, Delay, Reverb, and VinylSim effects.
+- [x] `src-tauri/src/audio/engine.rs` - Verify bus routing and validate zero-allocation processing (`assert_no_alloc`).
 
 ## Phase 3: UI Integration
 - [ ] `src/main.ts` - Build frontend effect selector and wire to `set_bus_effect` command.

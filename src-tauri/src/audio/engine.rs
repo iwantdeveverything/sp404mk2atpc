@@ -3,6 +3,7 @@ use crate::audio::effects::EffectChain;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
 use rtrb::Consumer;
+use assert_no_alloc::assert_no_alloc;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -97,7 +98,16 @@ fn write_data(
                 }
             }
             AudioCommand::SetBusEffect { bus, slot, effect } => {
-                // Instantiation will happen in Phase 2
+                let chain = match bus {
+                    BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
+                    BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
+                    BusRouting::Dry => None,
+                };
+                if let Some(chain) = chain {
+                    if slot < chain.slots.len() {
+                        chain.slots[slot] = crate::audio::effects::create_effect(effect);
+                    }
+                }
             }
             AudioCommand::SetEffectParam { bus, slot, param_id, value } => {
                 let chain = match bus {
@@ -140,73 +150,75 @@ fn write_data(
 
     // The output buffer is interleaved: [L, R, L, R, ...]
     for frame in output.chunks_mut(channels) {
-        let mut bus1_mix = vec![0.0; channels];
-        let mut bus2_mix = vec![0.0; channels];
-        let mut dry_mix = vec![0.0; channels];
+        assert_no_alloc(|| {
+            let mut bus1_mix = [0.0_f32; 8];
+            let mut bus2_mix = [0.0_f32; 8];
+            let mut dry_mix = [0.0_f32; 8];
 
-        for (i, event) in thread_state.active_events.iter_mut().enumerate() {
-            if let Some(buffer) = thread_state.buffers.get(&event.pad_id) {
-                let ratio = buffer.sample_rate as f32 / target_sample_rate as f32;
-                let index_f = event.position;
-                let index = index_f as usize;
+            for (i, event) in thread_state.active_events.iter_mut().enumerate() {
+                if let Some(buffer) = thread_state.buffers.get(&event.pad_id) {
+                    let ratio = buffer.sample_rate as f32 / target_sample_rate as f32;
+                    let index_f = event.position;
+                    let index = index_f as usize;
 
-                if index * (buffer.channels as usize) >= buffer.samples.len() {
-                    finished_events.push(i);
-                    continue;
-                }
+                    if index * (buffer.channels as usize) >= buffer.samples.len() {
+                        finished_events.push(i);
+                        continue;
+                    }
 
-                // Basic resampling with nearest neighbor interpolation and mixing
-                for c in 0..channels {
-                    let source_c = if c < buffer.channels as usize { c } else { 0 }; // Mono to stereo fallback
-                    let sample_idx = index * (buffer.channels as usize) + source_c;
+                    // Basic resampling with nearest neighbor interpolation and mixing
+                    for c in 0..channels {
+                        let source_c = if c < buffer.channels as usize { c } else { 0 }; // Mono to stereo fallback
+                        let sample_idx = index * (buffer.channels as usize) + source_c;
 
-                    if sample_idx < buffer.samples.len() {
-                        let sample_val = buffer.samples[sample_idx] * event.volume;
-                        match event.routing {
-                            BusRouting::Bus1 => bus1_mix[c] += sample_val,
-                            BusRouting::Bus2 => bus2_mix[c] += sample_val,
-                            BusRouting::Dry => dry_mix[c] += sample_val,
+                        if sample_idx < buffer.samples.len() {
+                            let sample_val = buffer.samples[sample_idx] * event.volume;
+                            match event.routing {
+                                BusRouting::Bus1 => bus1_mix[c] += sample_val,
+                                BusRouting::Bus2 => bus2_mix[c] += sample_val,
+                                BusRouting::Dry => dry_mix[c] += sample_val,
+                            }
                         }
                     }
+
+                    event.position += ratio;
+                } else {
+                    finished_events.push(i);
                 }
-
-                event.position += ratio;
-            } else {
-                finished_events.push(i);
             }
-        }
 
-        // Convert to stereo frames for FX processing
-        let mut b1_frame = [bus1_mix[0], if channels > 1 { bus1_mix[1] } else { bus1_mix[0] }];
-        let mut b2_frame = [bus2_mix[0], if channels > 1 { bus2_mix[1] } else { bus2_mix[0] }];
-        let mut dry_frame = [dry_mix[0], if channels > 1 { dry_mix[1] } else { dry_mix[0] }];
+            // Convert to stereo frames for FX processing
+            let mut b1_frame = [bus1_mix[0], if channels > 1 { bus1_mix[1] } else { bus1_mix[0] }];
+            let mut b2_frame = [bus2_mix[0], if channels > 1 { bus2_mix[1] } else { bus2_mix[0] }];
+            let dry_frame = [dry_mix[0], if channels > 1 { dry_mix[1] } else { dry_mix[0] }];
 
-        thread_state.bus1_fx.process_frame(&mut b1_frame);
-        thread_state.bus2_fx.process_frame(&mut b2_frame);
+            thread_state.bus1_fx.process_frame(&mut b1_frame);
+            thread_state.bus2_fx.process_frame(&mut b2_frame);
 
-        let mut master_frame = [
-            b1_frame[0] + b2_frame[0] + dry_frame[0],
-            b1_frame[1] + b2_frame[1] + dry_frame[1],
-        ];
+            let mut master_frame = [
+                b1_frame[0] + b2_frame[0] + dry_frame[0],
+                b1_frame[1] + b2_frame[1] + dry_frame[1],
+            ];
 
-        thread_state.master_fx.process_frame(&mut master_frame);
+            thread_state.master_fx.process_frame(&mut master_frame);
 
-        let mut frame_mix = vec![0.0; channels];
-        for c in 0..channels {
-            frame_mix[c] = master_frame[c.min(1)];
-        }
-
-        // Apply mix to frame with clipping protection
-        let is_armed = thread_state.resampling_armed.load(Ordering::Relaxed);
-        for (c, sample) in frame.iter_mut().enumerate() {
-            let out_sample = frame_mix[c].clamp(-1.0_f32, 1.0_f32);
-            *sample = out_sample;
-
-            if is_armed && thread_state.resampling_index < thread_state.resampling_buffer.len() {
-                thread_state.resampling_buffer[thread_state.resampling_index] = out_sample;
-                thread_state.resampling_index += 1;
+            let mut frame_mix = [0.0_f32; 8];
+            for c in 0..channels {
+                frame_mix[c] = master_frame[c.min(1)];
             }
-        }
+
+            // Apply mix to frame with clipping protection
+            let is_armed = thread_state.resampling_armed.load(Ordering::Relaxed);
+            for (c, sample) in frame.iter_mut().enumerate() {
+                let out_sample = frame_mix[c].clamp(-1.0_f32, 1.0_f32);
+                *sample = out_sample;
+
+                if is_armed && thread_state.resampling_index < thread_state.resampling_buffer.len() {
+                    thread_state.resampling_buffer[thread_state.resampling_index] = out_sample;
+                    thread_state.resampling_index += 1;
+                }
+            }
+        });
     }
 
     // Remove finished events in reverse order to preserve indices
@@ -348,5 +360,33 @@ mod tests {
         
         // Pad 0 should be choked, only Pad 1 plays (0.5)
         assert_eq!(output2, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn test_ring_buffer_commands() {
+        let (state, consumer) = AudioState::new(1024);
+        let mut thread_state = AudioEngineThreadState {
+            buffers: HashMap::new(),
+            active_events: Vec::new(),
+            command_rx: consumer,
+            resampling_buffer: vec![0.0; 1024],
+            resampling_index: 0,
+            resampling_armed: state.resampling_armed.clone(),
+            bus1_fx: EffectChain::new(),
+            bus2_fx: EffectChain::new(),
+            master_fx: EffectChain::new(),
+            tempo: 120.0,
+        };
+
+        // Enqueue effect commands
+        state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::Delay);
+        state.set_effect_param(crate::audio::state::BusRouting::Bus1, 0, 0, 0.75);
+
+        // Run one frame to process commands
+        let mut output = vec![0.0; 2];
+        write_data(&mut output, 2, 44100, &mut thread_state);
+
+        // Check if effect was set
+        assert!(thread_state.bus1_fx.slots[0].is_some());
     }
 }

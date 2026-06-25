@@ -1,67 +1,32 @@
-# Verification Report
+# Verification Report: SP-404MK2 Library Management (Phase 3)
 
-**Change**: sp404-library-management
-**Version**: N/A
-**Mode**: Standard
+## Artifact Store Mode
+openspec
 
-### Completeness
-| Metric | Value |
-|--------|-------|
-| Tasks total | 16 |
-| Tasks complete | 7 |
-| Tasks incomplete | 9 |
+## Completeness
+| Artifact | Status | Notes |
+|---|---|---|
+| Proposal | COMPLETE | |
+| Specs | COMPLETE | |
+| Design | COMPLETE | |
+| Tasks | INCOMPLETE | PR 4 tasks are unchecked (expected for chained slice) |
 
-*Note: This verification focuses on Phase 2 only as part of a chained slice. Unchecked tasks belong to Phase 3 and Phase 4 and are expected.*
+## Build & Test Evidence
+- **Rust Backend**: `cargo check` PASSED (Target completed in 10.17s).
+- **Frontend**: `npm run build` FAILED (Exit code 2).
+  - Error: `src/main.ts:71:5 - error TS6133: 'currentPreviewPath' is declared but its value is never read.`
 
-### Build & Tests Execution
-**Build**: ✅ Passed
-```text
-cargo test
-Finished `test` profile [unoptimized + debuginfo] target(s) in 3.13s
-```
+## Correctness & Spec Compliance
+- Phase 3 tasks (File Browser & Canvas Waveform) are marked as complete in `tasks.md`.
+- However, runtime/build evidence indicates a compilation failure in the frontend application.
 
-**Tests**: ✅ 8 passed / ❌ 0 failed / ⚠️ 0 skipped
-```text
-test audio::engine::tests::test_write_data_resampling ... ok
-test fs::audio::tests::test_load_file_unsupported_extension ... ok
-test fs::audio::tests::test_load_wav_valid ... ok
-test audio::effects::tests::test_process_frame_no_alloc ... ok
-test audio::engine::tests::test_mute_group_choking ... ok
-test audio::engine::tests::test_write_data_mixing ... ok
-test audio::engine::tests::test_ring_buffer_commands ... ok
-test audio::effects::tests::test_effect_instantiations ... ok
+## Design Coherence
+- Implementation claims to follow the design by integrating Native HTML5 Canvas API and `list_directory`/`pre_listen_start` IPC commands according to `apply-progress.md`. 
+- Cannot fully verify frontend interactions due to build failure.
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
-```
+## Issues
+### CRITICAL
+- **Frontend Build Failure**: `npm run build` fails on `tsc` due to unused variable `currentPreviewPath` in `src/main.ts`.
 
-**Coverage**: Not available
-
-### Spec Compliance Matrix
-| Requirement | Scenario | Test | Result |
-|-------------|----------|------|--------|
-| N/A | N/A | N/A | (No specs provided) |
-
-**Compliance summary**: 0/0 scenarios compliant
-
-### Correctness (Static Evidence)
-| Requirement | Status | Notes |
-|------------|--------|-------|
-| Phase 2 Tasks | ✅ Implemented | `pre_listen_event` and `pre_listen_start` successfully added in `engine.rs` and `lib.rs` |
-
-### Coherence (Design)
-| Decision | Followed? | Notes |
-|----------|-----------|-------|
-| Pre-listen independent audio playback channel | ✅ Yes | Correctly mixed to output in `engine.rs` directly, bypassing FX/BPM sync. |
-| Hardcoded bypassing | ✅ Yes | Avoided `bus1_fx`, `bus2_fx`, and `master_fx` loops in the thread loop for pre-listen buffers. |
-
-### Issues Found
-**CRITICAL**: None
-**WARNING**: 
-- `pre_listen` functionality has no unit tests in `audio::engine::tests`. Given that the functionality changes the core audio thread processing loop, testing its mix logic specifically is highly recommended to prevent regressions.
-- 9 tasks are incomplete, though this is expected as they belong to Phase 3 and Phase 4 in this stacked PR chain.
-**SUGGESTION**: 
-- Add a test similar to `test_write_data_mixing` but utilizing `state.pre_listen(buffer)` to guarantee pre-listen buffers bypass FX chains effectively.
-
-### Verdict
-PASS WITH WARNINGS
-Phase 2 implemented correctly according to design, but unit test coverage is lacking for the new audio channel.
+## Verdict
+FAIL

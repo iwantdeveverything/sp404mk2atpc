@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
@@ -62,6 +62,87 @@ const playCascadeAnimation = (padIndices: number[]) => {
       }
     }, index * 100);
   });
+};
+
+// --- File Browser & Waveform State ---
+let currentBrowserPath = "";
+let audioContext: AudioContext | null = null;
+let animationFrameId: number | null = null;
+
+interface DirEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+}
+
+const renderWaveform = async (audioData: ArrayBuffer, canvas: HTMLCanvasElement) => {
+  if (!audioContext) audioContext = new AudioContext();
+  
+  const audioBuffer = await audioContext.decodeAudioData(audioData);
+  const rawData = audioBuffer.getChannelData(0); // Only use first channel
+  const samples = 200; // Number of bars to draw
+  const blockSize = Math.floor(rawData.length / samples);
+  const filteredData = [];
+  
+  for (let i = 0; i < samples; i++) {
+    let blockStart = blockSize * i;
+    let sum = 0;
+    for (let j = 0; j < blockSize; j++) {
+      sum += Math.abs(rawData[blockStart + j]);
+    }
+    filteredData.push(sum / blockSize);
+  }
+  
+  const multiplier = Math.max(...filteredData);
+  const normalizedData = filteredData.map(n => n / multiplier);
+  
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  
+  // High-DPI support
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  
+  // Draw bars
+  const barWidth = rect.width / samples;
+  ctx.fillStyle = "#4ade80"; // accent color
+  
+  normalizedData.forEach((data, i) => {
+    const x = i * barWidth;
+    const height = Math.max(2, data * rect.height * 0.8);
+    const y = (rect.height - height) / 2;
+    ctx.fillRect(x + (barWidth * 0.2), y, barWidth * 0.6, height);
+  });
+};
+
+const drawPlayhead = (overlay: HTMLElement) => {
+  if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  overlay.classList.add("active");
+  overlay.style.left = "0%";
+  
+  let start: number | null = null;
+  const duration = 2000; // arbitrary dummy duration for visual feedback for now, 
+                         // a real implementation would use the actual audio duration
+                         // but we only do 'hover/select' pre-listen.
+  
+  const animate = (time: number) => {
+    if (!start) start = time;
+    const progress = (time - start) / duration;
+    
+    if (progress <= 1) {
+      overlay.style.left = `${progress * 100}%`;
+      animationFrameId = requestAnimationFrame(animate);
+    } else {
+      overlay.classList.remove("active");
+    }
+  };
+  
+  animationFrameId = requestAnimationFrame(animate);
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -224,6 +305,123 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       console.error("Error loading audio:", err);
       if (statusDisplay) typeText(statusDisplay, "LOAD ERROR", 10);
+    }
+  });
+
+  // --- File Browser Implementation ---
+  const browserPanel = document.getElementById("file-browser");
+  const browserToggleBtn = document.getElementById("browser-toggle-btn");
+  const browserCloseBtn = document.getElementById("browser-close-btn");
+  const browserOpenDirBtn = document.getElementById("browser-open-dir");
+  const browserUpDirBtn = document.getElementById("browser-up-dir");
+  const browserCurrentPath = document.getElementById("browser-current-path");
+  const browserFileList = document.getElementById("browser-file-list");
+  const waveformCanvas = document.getElementById("waveform-canvas") as HTMLCanvasElement;
+  const waveformOverlay = document.querySelector(".waveform-overlay") as HTMLElement;
+
+  const toggleBrowser = () => {
+    browserPanel?.classList.toggle("hidden");
+  };
+
+  browserToggleBtn?.addEventListener("click", toggleBrowser);
+  browserCloseBtn?.addEventListener("click", toggleBrowser);
+
+  const renderFileList = (entries: DirEntry[]) => {
+    if (!browserFileList) return;
+    browserFileList.innerHTML = "";
+    entries.forEach(entry => {
+      const li = document.createElement("li");
+      li.className = `file-item ${entry.is_dir ? "directory" : "file"}`;
+      li.innerHTML = `
+        <span class="file-icon">${entry.is_dir ? "📁" : "🎵"}</span>
+        <span class="file-name">${entry.name}</span>
+      `;
+      
+      li.addEventListener("click", async () => {
+        // Handle selection style
+        document.querySelectorAll(".file-item").forEach(item => item.classList.remove("active"));
+        li.classList.add("active");
+
+        if (entry.is_dir) {
+          loadDirectory(entry.path);
+        } else {
+          // It's a file, we want to pre-listen and render waveform
+          const ext = entry.name.toLowerCase();
+          if (ext.endsWith(".wav") || ext.endsWith(".mp3")) {
+            // 1. Render waveform using Canvas
+            try {
+              const url = convertFileSrc(entry.path);
+              const response = await fetch(url);
+              const arrayBuffer = await response.arrayBuffer();
+              await renderWaveform(arrayBuffer, waveformCanvas);
+              if (waveformOverlay) drawPlayhead(waveformOverlay);
+            } catch (err) {
+              console.error("Failed to render waveform:", err);
+            }
+
+            // 2. Call pre-listen command
+            try {
+              if (statusDisplay) typeText(statusDisplay, `PREVIEW: ${entry.name.substring(0,10)}`, 10);
+              await invoke("pre_listen_start", { path: entry.path });
+            } catch (err) {
+              console.error("Failed to pre-listen:", err);
+            }
+          }
+        }
+      });
+
+      // Also double-click to load to target pad
+      if (!entry.is_dir) {
+        li.addEventListener("dblclick", async () => {
+          if (statusDisplay) typeText(statusDisplay, "LOADING...", 10);
+          try {
+            await invoke("load_audio", { path: entry.path, padId: currentTargetPad });
+            if (statusDisplay) typeText(statusDisplay, `LOADED PAD ${currentTargetPad + 1}`, 10);
+          } catch (err) {
+            console.error("Error loading audio:", err);
+            if (statusDisplay) typeText(statusDisplay, "LOAD ERROR", 10);
+          }
+        });
+      }
+
+      browserFileList.appendChild(li);
+    });
+  };
+
+  const loadDirectory = async (path: string) => {
+    try {
+      const entries: DirEntry[] = await invoke("list_directory", { path });
+      currentBrowserPath = path;
+      if (browserCurrentPath) browserCurrentPath.innerText = path;
+      renderFileList(entries);
+    } catch (err) {
+      console.error("Failed to load directory:", err);
+    }
+  };
+
+  browserOpenDirBtn?.addEventListener("click", async () => {
+    try {
+      const dir = await open({
+        multiple: false,
+        directory: true,
+      });
+      if (dir && typeof dir === "string") {
+        loadDirectory(dir);
+      }
+    } catch (err) {
+      console.error("Failed to open directory dialog:", err);
+    }
+  });
+
+  browserUpDirBtn?.addEventListener("click", () => {
+    if (!currentBrowserPath) return;
+    // VERY simple up-dir logic for now
+    const lastSlash = Math.max(currentBrowserPath.lastIndexOf("/"), currentBrowserPath.lastIndexOf("\\"));
+    if (lastSlash > 0) {
+      const parentDir = currentBrowserPath.substring(0, lastSlash);
+      loadDirectory(parentDir);
+    } else if (lastSlash === 0) {
+      loadDirectory("/");
     }
   });
 

@@ -80,4 +80,10 @@ impl AudioState {
             let _ = tx.push(AudioCommand::SetEffectParam { bus, slot, param_id, value });
         }
     }
+
+    pub fn remove_bus_effect(&self, bus: BusRouting, slot: usize) {
+        if let Ok(mut tx) = self.command_tx.lock() {
+            let _ = tx.push(AudioCommand::RemoveBusEffect { bus, slot });
+        }
+    }
 }

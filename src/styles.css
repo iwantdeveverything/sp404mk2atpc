@@ -265,3 +265,187 @@ body {
   background: var(--pad-active);
   color: #fff;
 }
+
+/* Effect UI Glassmorphism & Animations */
+.effect-ui {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  gap: 16px;
+}
+
+.effect-selector-container {
+  position: relative;
+  flex: 1;
+}
+
+.glass-btn {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #1b2621;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.glass-btn::after {
+  content: '▼';
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.glass-btn:active {
+  transform: translateY(1px);
+}
+
+.effect-grid {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 320px;
+  background: rgba(26, 28, 35, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  z-index: 100;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transform-origin: top left;
+  animation: dropdown-in 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.effect-grid.hidden {
+  display: none;
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: scaleY(0.9) translateY(-10px); }
+  to { opacity: 1; transform: scaleY(1) translateY(0); }
+}
+
+.effect-option {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  padding: 10px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+  font-size: 14px;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.effect-option:hover {
+  background: rgba(74, 222, 128, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: scale(1.02);
+}
+
+.effect-option.active {
+  background: var(--accent);
+  color: #13141a;
+  font-weight: 600;
+  box-shadow: 0 0 15px rgba(74, 222, 128, 0.4);
+}
+
+.effect-option.remove {
+  background: rgba(255, 94, 58, 0.1);
+  color: #ff5e3a;
+  border-color: rgba(255, 94, 58, 0.2);
+  grid-column: 1 / -1; /* spans full width */
+}
+
+.effect-option.remove:hover {
+  background: rgba(255, 94, 58, 0.2);
+}
+
+/* Rotary Knobs */
+.knobs-container {
+  display: flex;
+  gap: 16px;
+  justify-content: flex-end;
+}
+
+.knob-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.knob {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3d4356, #21242f);
+  box-shadow: 
+    -2px -2px 6px rgba(255,255,255,0.08),
+    3px 3px 8px rgba(0,0,0,0.6),
+    inset 0 0 0 2px #181a22;
+  position: relative;
+  cursor: grab;
+  /* Default transform, will be overridden by inline style */
+  transform: rotate(-135deg); 
+  transition: box-shadow 0.2s ease;
+  touch-action: none;
+}
+
+.knob:active {
+  cursor: grabbing;
+}
+
+.knob:focus {
+  outline: none;
+  box-shadow: 
+    -2px -2px 6px rgba(255,255,255,0.08),
+    3px 3px 8px rgba(0,0,0,0.6),
+    inset 0 0 0 2px var(--accent),
+    0 0 10px rgba(74, 222, 128, 0.3);
+}
+
+.knob-indicator {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  margin-left: -2px; /* Center perfectly */
+  width: 4px;
+  height: 12px;
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 4px var(--accent);
+}
+
+.knob-label {
+  font-family: 'VT323', monospace;
+  font-size: 16px;
+  color: var(--lcd-text);
+  font-weight: bold;
+}

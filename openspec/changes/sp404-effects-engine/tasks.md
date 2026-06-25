@@ -16,9 +16,9 @@
 - [x] `src-tauri/src/audio/engine.rs` - Verify bus routing and validate zero-allocation processing (`assert_no_alloc`).
 
 ## Phase 3: UI Integration
-- [ ] `src/main.ts` - Build frontend effect selector and wire to `set_bus_effect` command.
-- [ ] `src/main.ts` - Add 3 rotary knobs (CTRL 1-3) and wire to `set_effect_param` command.
-- [ ] `src/styles.css` - Add styling for knobs, effect selector, and parameter display.
+- [x] `src/main.ts` - Build frontend effect selector and wire to `set_bus_effect` command.
+- [x] `src/main.ts` - Add 3 rotary knobs (CTRL 1-3) and wire to `set_effect_param` command.
+- [x] `src/styles.css` - Add styling for knobs, effect selector, and parameter display.
 
 ## Phase 4: BPM & Beat Sync
 - [ ] `src/main.ts` - Implement manual/tap BPM input and wire to `SetTempo` command.

@@ -17,6 +17,46 @@
           <div class="logo">SP-404MK2 <span>DAW</span></div>
           <div class="lcd-screen">
             <div class="lcd-text" id="status-display">WAITING FOR AUDIO</div>
+
+            <!-- Effect UI -->
+            <div class="effect-ui">
+              <div class="effect-selector-container">
+                <button id="effect-selector-btn" class="glass-btn">FX: None</button>
+                <div id="effect-selector-grid" class="effect-grid hidden">
+                  <button class="effect-option" data-effect="Filter">Filter</button>
+                  <button class="effect-option" data-effect="Isolator">Isolator</button>
+                  <button class="effect-option" data-effect="Delay">Delay</button>
+                  <button class="effect-option" data-effect="Reverb">Reverb</button>
+                  <button class="effect-option" data-effect="VinylSim">VinylSim</button>
+                  <button class="effect-option" data-effect="DjfxLooper">DJFX Looper</button>
+                  <button class="effect-option" data-effect="Scatter">Scatter</button>
+                  <button class="effect-option" data-effect="Slicer">Slicer</button>
+                  <button class="effect-option remove" data-effect="None">Remove FX</button>
+                </div>
+              </div>
+              
+              <div class="knobs-container">
+                <div class="knob-wrapper">
+                  <div class="knob" id="knob-1" data-param="0" tabindex="0">
+                    <div class="knob-indicator"></div>
+                  </div>
+                  <span class="knob-label">CTRL 1</span>
+                </div>
+                <div class="knob-wrapper">
+                  <div class="knob" id="knob-2" data-param="1" tabindex="0">
+                    <div class="knob-indicator"></div>
+                  </div>
+                  <span class="knob-label">CTRL 2</span>
+                </div>
+                <div class="knob-wrapper">
+                  <div class="knob" id="knob-3" data-param="2" tabindex="0">
+                    <div class="knob-indicator"></div>
+                  </div>
+                  <span class="knob-label">CTRL 3</span>
+                </div>
+              </div>
+            </div>
+
             <div class="controls" style="flex-wrap: wrap; gap: 8px;">
               <button id="resample-btn" class="routing-btn">RESAMPLE</button>
               <button id="bus1-btn" class="routing-btn">BUS 1</button>

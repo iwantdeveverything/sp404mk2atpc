@@ -20,6 +20,7 @@ let isBooting = false;
 
 let isBus1Held = false;
 let isBus2Held = false;
+let currentEditBus = "Bus1";
 let isResampleArmed = false;
 let isResampleRecording = false;
 
@@ -234,7 +235,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const el = document.elementFromPoint(position.x, position.y);
       const padEl = el?.closest('.pad');
       pads.forEach(p => p.classList.toggle('drag-hover', p === padEl));
-    } else if (event.payload.type === 'leave' || event.payload.type === 'cancel') {
+    } else if (event.payload.type === 'leave') {
       pads.forEach(p => p.classList.remove('drag-hover'));
       if (statusDisplay && statusDisplay.innerText === "INVALID FORMAT") {
         statusDisplay.innerText = "";
@@ -290,5 +291,99 @@ window.addEventListener("DOMContentLoaded", () => {
         }, 2000);
       }
     }
+  });
+
+  // UI elements for Effects
+  const effectSelectorBtn = document.getElementById("effect-selector-btn");
+  const effectSelectorGrid = document.getElementById("effect-selector-grid");
+  const effectOptions = document.querySelectorAll<HTMLElement>(".effect-option");
+  const knobs = document.querySelectorAll<HTMLElement>(".knob");
+
+  // Toggle effect selector
+  effectSelectorBtn?.addEventListener("click", () => {
+    effectSelectorGrid?.classList.toggle("hidden");
+  });
+
+  // Handle effect selection
+  effectOptions.forEach(opt => {
+    opt.addEventListener("click", async () => {
+      const effectName = opt.dataset.effect || "None";
+      
+      // Update UI
+      effectOptions.forEach(o => o.classList.remove("active"));
+      if (effectName !== "None") {
+        opt.classList.add("active");
+        if (effectSelectorBtn) {
+          effectSelectorBtn.innerHTML = `FX: ${opt.innerText}`;
+          // Make sure the arrow spans correctly with flex
+          const textNode = document.createTextNode("");
+          effectSelectorBtn.appendChild(textNode); 
+        }
+      } else {
+        if (effectSelectorBtn) effectSelectorBtn.innerHTML = `FX: None`;
+      }
+      
+      effectSelectorGrid?.classList.add("hidden");
+      
+      // Send to Rust
+      try {
+        if (effectName === "None") {
+          await invoke("remove_bus_effect", { bus: currentEditBus, slot: 0 });
+        } else {
+          await invoke("set_bus_effect", { bus: currentEditBus, slot: 0, effect: effectName });
+        }
+        if (statusDisplay) typeText(statusDisplay, `FX: ${effectName.toUpperCase()}`, 10);
+      } catch (err) {
+        console.error("Error setting effect:", err);
+      }
+    });
+  });
+
+  // Close dropdown if clicking outside
+  document.addEventListener("click", (e) => {
+    if (effectSelectorBtn && effectSelectorGrid && !effectSelectorBtn.contains(e.target as Node) && !effectSelectorGrid.contains(e.target as Node)) {
+      effectSelectorGrid.classList.add("hidden");
+    }
+  });
+
+  // Handle knobs
+  knobs.forEach(knob => {
+    let isDragging = false;
+    let startY = 0;
+    let currentVal = 0; // 0.0 to 1.0
+
+    knob.addEventListener("mousedown", (e) => {
+      isDragging = true;
+      startY = e.clientY;
+      knob.style.cursor = "grabbing";
+    });
+
+    window.addEventListener("mousemove", async (e) => {
+      if (!isDragging) return;
+      const deltaY = startY - e.clientY;
+      startY = e.clientY; // reset for continuous drag
+      
+      currentVal += deltaY * 0.005; // sensitivity
+      currentVal = Math.max(0, Math.min(1, currentVal));
+      
+      // Visual update: -135deg to +135deg
+      const angle = -135 + (currentVal * 270);
+      knob.style.transform = `rotate(${angle}deg)`;
+      
+      // Throttle or send param to rust
+      const paramId = parseInt(knob.dataset.param || "0", 10);
+      try {
+        await invoke("set_effect_param", { bus: currentEditBus, slot: 0, paramId, value: currentVal });
+      } catch (err) {
+        console.error("Error setting param:", err);
+      }
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (isDragging) {
+        isDragging = false;
+        knob.style.cursor = "grab";
+      }
+    });
   });
 });

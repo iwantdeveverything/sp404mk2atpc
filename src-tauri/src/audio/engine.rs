@@ -36,6 +36,34 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
+    let fx_config = state.fx_config.lock().unwrap().clone();
+    let mut bus1_fx = EffectChain::new();
+    let mut bus2_fx = EffectChain::new();
+
+    for (i, slot) in fx_config.bus1.slots.iter().enumerate() {
+        if let Some(cfg) = slot {
+            if let Some(mut fx) = crate::audio::effects::create_effect(cfg.effect_type) {
+                fx.set_tempo(120.0);
+                for (pid, &val) in cfg.params.iter().enumerate() {
+                    fx.set_parameter(pid as u8, val);
+                }
+                bus1_fx.slots[i] = Some(fx);
+            }
+        }
+    }
+
+    for (i, slot) in fx_config.bus2.slots.iter().enumerate() {
+        if let Some(cfg) = slot {
+            if let Some(mut fx) = crate::audio::effects::create_effect(cfg.effect_type) {
+                fx.set_tempo(120.0);
+                for (pid, &val) in cfg.params.iter().enumerate() {
+                    fx.set_parameter(pid as u8, val);
+                }
+                bus2_fx.slots[i] = Some(fx);
+            }
+        }
+    }
+
     let mut thread_state = AudioEngineThreadState {
         buffers: HashMap::new(),
         active_events: Vec::new(),
@@ -43,8 +71,8 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
         resampling_buffer: vec![0.0; RESAMPLE_BUFFER_SIZE],
         resampling_index: 0,
         resampling_armed: state.resampling_armed,
-        bus1_fx: EffectChain::new(),
-        bus2_fx: EffectChain::new(),
+        bus1_fx,
+        bus2_fx,
         master_fx: EffectChain::new(),
         tempo: 120.0,
     };

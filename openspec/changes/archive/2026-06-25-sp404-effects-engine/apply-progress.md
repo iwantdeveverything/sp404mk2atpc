@@ -16,6 +16,9 @@
 - [x] `src/main.ts` - Implement manual/tap BPM input and wire to `SetTempo` command.
 - [x] `src-tauri/src/audio/effects/mod.rs` - Build beat-synced effects: DJFX Looper, Scatter, Slicer.
 - [x] `src-tauri/src/audio/engine.rs` - Distribute tempo updates via `AudioCommand` to sync effects.
+- [x] `src-tauri/src/audio/effects/mod.rs` - Implement the remaining 29 standard MFX effects.
+- [x] `src-tauri/src/audio/state.rs` - Add serialization traits to effect state structs.
+- [x] `src-tauri/src/audio/engine.rs` - Wire serialization to persist and load FX configs on app restart.
 
 ## Files Changed
 | File | Action | What Was Done |
@@ -34,3 +37,6 @@
 | `src-tauri/src/audio/state.rs` | Modified | Added `set_tempo` method to `AudioState`. |
 | `src-tauri/src/audio/effects/mod.rs` | Modified | Added `set_tempo` to `Effect` trait and `FunDspWrapper`. Implemented `DjfxLooper`, `Scatter`, and `Slicer` effects using tempo-synced DSP primitives. |
 | `src-tauri/src/audio/engine.rs` | Modified | Wired `SetTempo` command to distribute tempo to `thread_state.tempo` and all `EffectChain` instances. |
+| `src-tauri/src/audio/effects/mod.rs` | Modified | Added remaining 29 MFX effects to `EffectType` enum with serde traits, removed unused Arc import, added placeholder instantiations. |
+| `src-tauri/src/audio/state.rs` | Modified | Added `EffectSlotConfig`, `FxChainConfig`, and `AppFxConfig` with serde serialization. Added `fx_config` to `AudioState` to manage persistence and state serialization upon configuration updates. |
+| `src-tauri/src/audio/engine.rs` | Modified | Wired `AppFxConfig` loading in `start_audio_engine` to initialize `bus1_fx` and `bus2_fx` with persisted effect settings on app restart. |

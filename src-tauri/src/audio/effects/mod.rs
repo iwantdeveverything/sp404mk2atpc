@@ -1,5 +1,5 @@
 use fundsp::hacker32::*;
-use std::sync::Arc;
+use serde::{Serialize, Deserialize};
 
 pub trait Effect: Send + Sync {
     fn process_frame(&mut self, frame: &mut [f32; 2]);
@@ -37,7 +37,7 @@ impl EffectChain {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum EffectType {
     Isolator,
     DjfxLooper,
@@ -47,6 +47,10 @@ pub enum EffectType {
     Reverb,
     Scatter,
     Slicer,
+    Chorus, Flanger, Phaser, Tremolo, AutoPan, Compressor, Equalizer, LoFi,
+    Bitcrusher, RingMod, PitchShifter, Distortion, Overdrive, Fuzz, Wah,
+    Octave, Resonator, TapeEcho, Shimmer, Gater, Reverse, Stutter, TapeStop,
+    Compressor2, Equalizer2, Chorus2, Flanger2, Phaser2, Delay2,
 }
 
 pub struct FunDspWrapper {
@@ -159,7 +163,10 @@ pub fn create_effect(effect_type: EffectType) -> Option<Box<dyn Effect>> {
             let node = ch1 | ch2;
             Some(Box::new(FunDspWrapper::new_with_tempo(Box::new(node), vec![], bpm)))
         }
-        _ => None,
+        _ => {
+            let node = pass() | pass();
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![])))
+        }
     }
 }
 

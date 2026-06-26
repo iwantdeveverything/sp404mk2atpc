@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
-use tauri::State;
+use tauri::{Manager, State};
 
 #[derive(Serialize)]
 pub struct DirEntry {
@@ -110,4 +110,49 @@ impl AutoSaveEngine {
 #[tauri::command]
 pub fn save_project_state(state: ProjectState, engine: State<'_, AutoSaveEngine>) -> Result<(), String> {
     engine.save(state)
+}
+
+/// Pure helper: resolve the default project directory under `base`,
+/// creating the `default-project` subfolder if it does not exist.
+/// Kept free of any Tauri AppHandle dependency so it is unit-testable.
+pub fn resolve_default_project_dir(base: &Path) -> Result<PathBuf, String> {
+    let dir = base.join("default-project");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Resolve a stable default project directory under the app data dir.
+/// The frontend has no notion of a project path; Rust owns it.
+#[tauri::command]
+pub fn get_default_project_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let dir = resolve_default_project_dir(&base)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env::temp_dir;
+
+    #[test]
+    fn test_resolve_default_project_dir_creates_dir() {
+        // Unique base under the OS temp dir to avoid cross-test collisions.
+        let mut base = temp_dir();
+        base.push(format!("sp404_test_{}", std::process::id()));
+
+        let resolved = resolve_default_project_dir(&base).expect("should resolve dir");
+
+        assert!(resolved.is_dir(), "default project dir should be created");
+        assert!(
+            resolved.ends_with("default-project"),
+            "resolved path should end with 'default-project'"
+        );
+
+        // Clean up.
+        let _ = fs::remove_dir_all(&base);
+    }
 }

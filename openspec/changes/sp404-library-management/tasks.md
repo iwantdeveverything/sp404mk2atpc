@@ -28,7 +28,7 @@
 
 ## PR 4: UI - Drag & Drop and Polish (Frontend)
 *Target branch: `feature/sp404-library-management-4-dnd` (stacked on PR 3)*
-- [ ] Implement native DOM drag events (`dragstart`, `dragenter`, `dragover`, `dragleave`, `drop`) on the pad components.
-- [ ] Add visual feedback CSS classes (`.drag-target-active`) for hover/drag over states (glowing border, scale-up).
-- [ ] Create and trigger CSS keyframe animations (e.g., `pulse-success`) upon a successful drop.
-- [ ] Wire the `drop` event to call the `ingest_sample_to_project` IPC command and correctly associate the returned relative path with the target pad.
+- [x] Implement native DOM drag events (`dragstart`, `dragenter`, `dragover`, `dragleave`, `drop`) on the pad components.
+- [x] Add visual feedback CSS classes (`.drag-target-active`) for hover/drag over states (glowing border, scale-up).
+- [x] Create and trigger CSS keyframe animations (e.g., `pulse-success`) upon a successful drop.
+- [x] Wire the `drop` event to call the `ingest_sample_to_project` IPC command and correctly associate the returned relative path with the target pad.

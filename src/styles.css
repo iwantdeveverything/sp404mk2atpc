@@ -209,6 +209,37 @@ body {
   transition: box-shadow 0.3s ease-out, background 0.3s ease-out;
 }
 
+/* Internal drag-and-drop target state (file-browser item over a pad) */
+.pad.drag-target-active {
+  border: 2px solid var(--accent);
+  box-shadow:
+    0 0 24px rgba(74, 222, 128, 0.6),
+    0 0 12px var(--accent),
+    inset 0 0 0 2px rgba(74, 222, 128, 0.4);
+  transform: scale(1.05);
+  transition: transform 0.12s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.12s ease-out;
+}
+
+/* Successful drop feedback animation (plays once) */
+@keyframes pulse-success {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(74, 222, 128, 0);
+  }
+  40% {
+    transform: scale(1.12);
+    box-shadow: 0 0 30px rgba(74, 222, 128, 0.8), 0 0 14px var(--accent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(74, 222, 128, 0);
+  }
+}
+
+.pad.pulse-success {
+  animation: pulse-success 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
 /* Routing & Resampling UI */
 @keyframes blink-red {
   0%, 100% {

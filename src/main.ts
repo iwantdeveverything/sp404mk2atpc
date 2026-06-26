@@ -69,6 +69,20 @@ let currentBrowserPath = "";
 let audioContext: AudioContext | null = null;
 let animationFrameId: number | null = null;
 
+// --- Internal Drag & Drop State ---
+// Path of the file-browser item currently being dragged (internal DOM drag).
+// This is SEPARATE from the native OS drag handled by onDragDropEvent.
+let internalDragPath: string | null = null;
+// Cached default project dir resolved by Rust; lazily fetched once.
+let cachedProjectDir: string | null = null;
+
+const getProjectDir = async (): Promise<string> => {
+  if (cachedProjectDir === null) {
+    cachedProjectDir = await invoke<string>("get_default_project_dir");
+  }
+  return cachedProjectDir;
+};
+
 interface DirEntry {
   name: string;
   path: string;
@@ -272,6 +286,59 @@ window.addEventListener("DOMContentLoaded", () => {
       
       if (statusDisplay) typeText(statusDisplay, `TARGET PAD ${padId + 1}`, 10);
     });
+
+    // Internal HTML5 drag-and-drop target (file-browser item -> pad).
+    // This coexists with the native OS drop handled by onDragDropEvent:
+    // these listeners only react to internal DOM drags (internalDragPath set).
+    pad.addEventListener("dragenter", (e) => {
+      if (internalDragPath === null) return;
+      e.preventDefault();
+      pad.classList.add("drag-target-active");
+    });
+
+    pad.addEventListener("dragover", (e) => {
+      if (internalDragPath === null) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      pad.classList.add("drag-target-active");
+    });
+
+    pad.addEventListener("dragleave", () => {
+      pad.classList.remove("drag-target-active");
+    });
+
+    pad.addEventListener("drop", async (e) => {
+      if (internalDragPath === null) return;
+      e.preventDefault();
+      pad.classList.remove("drag-target-active");
+
+      const sourcePath = internalDragPath;
+      const padId = parseInt(pad.dataset.pad || "0", 10);
+
+      try {
+        if (statusDisplay) typeText(statusDisplay, "INGESTING...", 10);
+
+        const projectDir = await getProjectDir();
+        const relativePath = await invoke<string>("ingest_sample_to_project", {
+          sourcePath,
+          projectDir,
+        });
+
+        const ingestedPath = `${projectDir}/${relativePath}`;
+        await invoke("load_audio", { path: ingestedPath, padId });
+
+        pad.classList.remove("pulse-success");
+        // Force reflow so the animation can replay on repeated drops.
+        void pad.offsetWidth;
+        pad.classList.add("pulse-success");
+        setTimeout(() => pad.classList.remove("pulse-success"), 500);
+
+        if (statusDisplay) typeText(statusDisplay, `LOADED PAD ${padId + 1}`, 10);
+      } catch (err) {
+        console.error("Error ingesting sample to pad:", err);
+        if (statusDisplay) typeText(statusDisplay, "INGEST ERROR", 10);
+      }
+    });
   });
 
   // Handle keyboard
@@ -369,6 +436,21 @@ window.addEventListener("DOMContentLoaded", () => {
           }
         }
       });
+
+      // Make audio files draggable into pads via internal HTML5 DOM drag.
+      if (!entry.is_dir) {
+        li.setAttribute("draggable", "true");
+        li.addEventListener("dragstart", (e) => {
+          internalDragPath = entry.path;
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = "copy";
+            e.dataTransfer.setData("text/plain", entry.path);
+          }
+        });
+        li.addEventListener("dragend", () => {
+          internalDragPath = null;
+        });
+      }
 
       // Also double-click to load to target pad
       if (!entry.is_dir) {

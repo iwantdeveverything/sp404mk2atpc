@@ -119,7 +119,8 @@ pub fn run() {
             pre_listen_start,
             fs::project::list_directory,
             fs::project::ingest_sample_to_project,
-            fs::project::save_project_state
+            fs::project::save_project_state,
+            fs::project::get_default_project_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -34,3 +34,25 @@ Text updates on the LCD MUST use a fast typing animation effect instead of appea
 - **Then** the new text MUST render character by character
 - **And** the character rendering MUST be fast enough to avoid feeling sluggish (retro-computer typing style)
 - **And** the typing effect MUST NOT block or delay any underlying audio logic
+
+### Requirement: Drag-and-drop Visual Feedback States
+**Scenario:**
+- **Given** the user is dragging an audio file from the file browser
+- **When** the cursor enters a valid drop target (a pad)
+- **Then** the pad MUST display visual feedback (e.g., a glowing border, scale-up, or color change)
+- **And** when the cursor leaves the drop target, the visual feedback MUST be removed
+
+### Requirement: Drag-and-drop Success Animation
+**Scenario:**
+- **Given** an audio file has been successfully dropped onto a pad
+- **When** the file is ingested and loaded
+- **Then** the UI MUST trigger a success animation (e.g., a pulse or flash effect)
+- **And** the animation MUST provide clear visual confirmation that the file was loaded
+
+### Requirement: Pre-listen Visual Feedback (File Browser)
+**Scenario:**
+- **Given** the file browser is active
+- **When** a user selects an audio file for pre-listening
+- **Then** the UI MUST display a visual waveform representation of the audio file
+- **And** the selected file MUST have a distinct active state (e.g., highlighted background or glow)
+- **And** as the pre-listen audio plays, a playhead overlay MUST move across the waveform in real-time

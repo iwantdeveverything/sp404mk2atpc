@@ -59,3 +59,11 @@
     **When** the files are mapped to their respective pads
     **Then** the UI MUST trigger a cascading lighting animation sequentially across the pads that received the new files
     **And** the animation MUST visually reinforce where the files landed, lighting up each target pad one after the other.
+
+### Requirement: Bundle Ingestion via Internal Drag-Drop
+**Scenario:**
+- **Given** a user drags an audio file from the file browser and drops it onto a pad
+- **When** the drop event triggers the internal drag-drop mechanism
+- **Then** the `ingest_sample_to_project` IPC command MUST be invoked with the source file path
+- **And** the sample MUST be physically copied into the project bundle `samples/` directory
+- **And** the returned relative path MUST be associated with the target pad (NOT a direct reference to the original source file)

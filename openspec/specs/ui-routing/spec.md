@@ -37,3 +37,17 @@
 - **Given** the UI is active
 - **When** tempo adjustments are needed
 - **Then** the interface MUST provide both a manual BPM numeric input and a dedicated tap tempo button.
+
+### Requirement: File Browser View Routing
+**Scenario:**
+- **Given** the user wants to browse audio files on disk
+- **When** the file browser is opened or becomes active
+- **Then** the UI MUST route to and display the full-disk File Browser interface
+- **And** the File Browser MUST support navigation through the local file system and audio file preview/pre-listening
+
+### Requirement: Project Save UI Routing
+**Scenario:**
+- **Given** the project state has been modified
+- **When** the user initiates an explicit save operation
+- **Then** the UI MUST route to and display appropriate save dialogs or overlays
+- **And** the system MUST provide clear feedback that the project has been saved

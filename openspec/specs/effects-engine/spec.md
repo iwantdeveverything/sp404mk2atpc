@@ -46,3 +46,10 @@ Effect state MUST be established before audio processing begins.
 - **Given** an effect is being instantiated
 - **When** the effect is created
 - **Then** all required memory buffers and internal states MUST be fully pre-allocated.
+
+### Requirement: Pre-listen Isolation
+**Scenario:**
+- **Given** pre-listen audio is being played
+- **When** the audio data passes through the render callback from the pre-listen channel
+- **Then** the effects engine MUST NOT process audio originating from the pre-listen channel
+- **And** the pre-listen signal MUST bypass all effect chains and reach the output unprocessed

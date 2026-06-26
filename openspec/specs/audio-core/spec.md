@@ -40,3 +40,17 @@
 - **Given** the audio engine is initializing
 - **When** the audio state is constructed
 - **Then** it MUST include fields for the effect chains and track the active `BusId` and `EffectType` for dynamic routing and parameter management.
+
+### Requirement: Pre-listen Channel (Raw Audio Playback)
+**Scenario:**
+- **Given** the file browser is active and a user selects an audio file for preview
+- **When** the pre-listen is triggered via the `pre_listen_start` IPC command
+- **Then** an independent raw audio playback mechanism MUST play the audio through a dedicated pre-listen channel
+- **And** this channel MUST explicitly bypass the FX routing and bus processing to ensure uncolored auditioning
+
+### Requirement: Pre-listen Routing Bypass
+**Scenario:**
+- **Given** pre-listen audio is being played
+- **When** the audio passes through the render callback
+- **Then** the pre-listen channel MUST NOT be routed through any FX bus or Master bus effects
+- **And** the pre-listen signal MUST pass directly to the output without coloration

@@ -546,6 +546,31 @@ body {
   font-size: 16px;
   color: var(--lcd-text);
   font-weight: bold;
+  text-align: center;
+  max-width: 64px;
+  line-height: 1.1;
+}
+
+/* Dedicated wet/dry mix control (always present for an active effect) */
+.mix-control {
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  margin-left: 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.mix-control.hidden {
+  display: none;
+}
+
+.mix-knob {
+  background: linear-gradient(135deg, #4a5570, #262a38);
+}
+
+.mix-knob .knob-indicator {
+  background: #ffc24a;
+  box-shadow: 0 0 4px #ffc24a;
 }
 
 /* File Browser */

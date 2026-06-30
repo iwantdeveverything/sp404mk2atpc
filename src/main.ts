@@ -576,47 +576,182 @@ window.addEventListener("DOMContentLoaded", () => {
   // UI elements for Effects
   const effectSelectorBtn = document.getElementById("effect-selector-btn");
   const effectSelectorGrid = document.getElementById("effect-selector-grid");
-  const effectOptions = document.querySelectorAll<HTMLElement>(".effect-option");
-  const knobs = document.querySelectorAll<HTMLElement>(".knob");
+  const knobsContainer = document.getElementById("knobs-container");
+  const mixControl = document.getElementById("mix-control");
+  const mixKnob = document.getElementById("mix-knob");
+
+  // Parameter metadata DTO mirrors the backend ParamSpecDto (get_effect_parameters).
+  interface ParamSpec {
+    name: string;
+    unit: string;
+    min: number;
+    max: number;
+    default: number; // NORMALIZED 0..1
+    curve: string;
+  }
+
+  // Friendly labels for known effect identifiers; falls back to the raw id.
+  const EFFECT_LABELS: Record<string, string> = {
+    DjfxLooper: "DJFX Looper",
+  };
+
+  const labelFor = (effectId: string): string => EFFECT_LABELS[effectId] ?? effectId;
+
+  // Attach vertical-drag knob behavior. `onChange` receives the normalized 0..1
+  // value; `initial` seeds both the visual angle and the starting value.
+  const wireKnob = (knob: HTMLElement, initial: number, onChange: (value: number) => void) => {
+    let startY = 0;
+    let currentVal = Math.max(0, Math.min(1, initial));
+
+    const applyAngle = (value: number) => {
+      const angle = -135 + value * 270;
+      knob.style.transform = `rotate(${angle}deg)`;
+    };
+    applyAngle(currentVal);
+
+    // Move/up listeners live only for the duration of a drag. Registering them
+    // on mousedown and removing them on mouseup prevents window-level listener
+    // accumulation when knobs are re-rendered on every effect selection.
+    const onMove = (e: MouseEvent) => {
+      const deltaY = startY - e.clientY;
+      startY = e.clientY;
+      currentVal += deltaY * 0.005; // sensitivity
+      currentVal = Math.max(0, Math.min(1, currentVal));
+      applyAngle(currentVal);
+      onChange(currentVal);
+    };
+
+    const onUp = () => {
+      knob.style.cursor = "grab";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    knob.addEventListener("mousedown", (e) => {
+      startY = e.clientY;
+      knob.style.cursor = "grabbing";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+  };
+
+  // Render one labeled knob per parameter, seeded from each spec's default.
+  const renderParamKnobs = (specs: ParamSpec[]) => {
+    if (!knobsContainer) return;
+    knobsContainer.innerHTML = "";
+    specs.forEach((spec, paramId) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "knob-wrapper";
+
+      const knob = document.createElement("div");
+      knob.className = "knob";
+      knob.tabIndex = 0;
+      const indicator = document.createElement("div");
+      indicator.className = "knob-indicator";
+      knob.appendChild(indicator);
+
+      const label = document.createElement("span");
+      label.className = "knob-label";
+      label.innerText = spec.unit ? `${spec.name} (${spec.unit})` : spec.name;
+
+      wrapper.appendChild(knob);
+      wrapper.appendChild(label);
+      knobsContainer.appendChild(wrapper);
+
+      wireKnob(knob, spec.default, async (value) => {
+        try {
+          // The knob sends the NORMALIZED 0..1 value; normalization to the real
+          // range happens backend-side per the design data flow.
+          await invoke("set_effect_param", { bus: currentEditBus, slot: 0, paramId, value });
+        } catch (err) {
+          console.error("Error setting param:", err);
+        }
+      });
+    });
+  };
+
+  // Wire the dedicated wet/dry mix control once; it stays in the DOM and is shown
+  // whenever an effect is active. Default mix is fully wet (1.0).
+  if (mixKnob) {
+    wireKnob(mixKnob, 1.0, async (value) => {
+      try {
+        await invoke("set_effect_mix", { bus: currentEditBus, slot: 0, mix: value });
+      } catch (err) {
+        console.error("Error setting mix:", err);
+      }
+    });
+  }
+
+  const clearActiveEffectUi = () => {
+    if (knobsContainer) knobsContainer.innerHTML = "";
+    mixControl?.classList.add("hidden");
+  };
+
+  const selectEffect = async (effectId: string) => {
+    effectSelectorGrid
+      ?.querySelectorAll(".effect-option")
+      .forEach((o) => o.classList.remove("active"));
+
+    if (effectId === "None") {
+      if (effectSelectorBtn) effectSelectorBtn.innerHTML = "FX: None";
+      effectSelectorGrid?.classList.add("hidden");
+      clearActiveEffectUi();
+      try {
+        await invoke("remove_bus_effect", { bus: currentEditBus, slot: 0 });
+        if (statusDisplay) typeText(statusDisplay, "FX: NONE", 10);
+      } catch (err) {
+        console.error("Error removing effect:", err);
+      }
+      return;
+    }
+
+    const selected = effectSelectorGrid?.querySelector(`[data-effect="${effectId}"]`);
+    selected?.classList.add("active");
+    if (effectSelectorBtn) effectSelectorBtn.innerHTML = `FX: ${labelFor(effectId)}`;
+    effectSelectorGrid?.classList.add("hidden");
+
+    try {
+      await invoke("set_bus_effect", { bus: currentEditBus, slot: 0, effect: effectId });
+      const specs = await invoke<ParamSpec[]>("get_effect_parameters", { effect: effectId });
+      renderParamKnobs(specs);
+      mixControl?.classList.remove("hidden");
+      if (statusDisplay) typeText(statusDisplay, `FX: ${effectId.toUpperCase()}`, 10);
+    } catch (err) {
+      console.error("Error setting effect:", err);
+    }
+  };
+
+  // Populate the selector from the engine's implemented-effects set.
+  const populateEffectSelector = async () => {
+    if (!effectSelectorGrid) return;
+    try {
+      const effects = await invoke<string[]>("list_effects");
+      effectSelectorGrid.innerHTML = "";
+      effects.forEach((effectId) => {
+        const btn = document.createElement("button");
+        btn.className = "effect-option";
+        btn.dataset.effect = effectId;
+        btn.innerText = labelFor(effectId);
+        btn.addEventListener("click", () => selectEffect(effectId));
+        effectSelectorGrid.appendChild(btn);
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "effect-option remove";
+      removeBtn.dataset.effect = "None";
+      removeBtn.innerText = "Remove FX";
+      removeBtn.addEventListener("click", () => selectEffect("None"));
+      effectSelectorGrid.appendChild(removeBtn);
+    } catch (err) {
+      console.error("Error loading effects list:", err);
+    }
+  };
+
+  populateEffectSelector();
 
   // Toggle effect selector
   effectSelectorBtn?.addEventListener("click", () => {
     effectSelectorGrid?.classList.toggle("hidden");
-  });
-
-  // Handle effect selection
-  effectOptions.forEach(opt => {
-    opt.addEventListener("click", async () => {
-      const effectName = opt.dataset.effect || "None";
-      
-      // Update UI
-      effectOptions.forEach(o => o.classList.remove("active"));
-      if (effectName !== "None") {
-        opt.classList.add("active");
-        if (effectSelectorBtn) {
-          effectSelectorBtn.innerHTML = `FX: ${opt.innerText}`;
-          // Make sure the arrow spans correctly with flex
-          const textNode = document.createTextNode("");
-          effectSelectorBtn.appendChild(textNode); 
-        }
-      } else {
-        if (effectSelectorBtn) effectSelectorBtn.innerHTML = `FX: None`;
-      }
-      
-      effectSelectorGrid?.classList.add("hidden");
-      
-      // Send to Rust
-      try {
-        if (effectName === "None") {
-          await invoke("remove_bus_effect", { bus: currentEditBus, slot: 0 });
-        } else {
-          await invoke("set_bus_effect", { bus: currentEditBus, slot: 0, effect: effectName });
-        }
-        if (statusDisplay) typeText(statusDisplay, `FX: ${effectName.toUpperCase()}`, 10);
-      } catch (err) {
-        console.error("Error setting effect:", err);
-      }
-    });
   });
 
   // Close dropdown if clicking outside
@@ -624,47 +759,6 @@ window.addEventListener("DOMContentLoaded", () => {
     if (effectSelectorBtn && effectSelectorGrid && !effectSelectorBtn.contains(e.target as Node) && !effectSelectorGrid.contains(e.target as Node)) {
       effectSelectorGrid.classList.add("hidden");
     }
-  });
-
-  // Handle knobs
-  knobs.forEach(knob => {
-    let isDragging = false;
-    let startY = 0;
-    let currentVal = 0; // 0.0 to 1.0
-
-    knob.addEventListener("mousedown", (e) => {
-      isDragging = true;
-      startY = e.clientY;
-      knob.style.cursor = "grabbing";
-    });
-
-    window.addEventListener("mousemove", async (e) => {
-      if (!isDragging) return;
-      const deltaY = startY - e.clientY;
-      startY = e.clientY; // reset for continuous drag
-      
-      currentVal += deltaY * 0.005; // sensitivity
-      currentVal = Math.max(0, Math.min(1, currentVal));
-      
-      // Visual update: -135deg to +135deg
-      const angle = -135 + (currentVal * 270);
-      knob.style.transform = `rotate(${angle}deg)`;
-      
-      // Throttle or send param to rust
-      const paramId = parseInt(knob.dataset.param || "0", 10);
-      try {
-        await invoke("set_effect_param", { bus: currentEditBus, slot: 0, paramId, value: currentVal });
-      } catch (err) {
-        console.error("Error setting param:", err);
-      }
-    });
-
-    window.addEventListener("mouseup", () => {
-      if (isDragging) {
-        isDragging = false;
-        knob.style.cursor = "grab";
-      }
-    });
   });
 
   // Tap Tempo & BPM Logic

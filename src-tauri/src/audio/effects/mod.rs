@@ -115,6 +115,30 @@ pub fn effect_metadata(effect_type: EffectType) -> &'static [ParamSpec] {
             default: 1.0,
             curve: Linear,
         }],
+        // PR2: Modulation family. LFO-based effects use a free-running rate in Hz
+        // (exponential curve so the low end has fine resolution). Depth/feedback
+        // are unitless 0..1 amounts.
+        EffectType::Tremolo => &[
+            ParamSpec { name: "Rate", unit: "Hz", min: 0.1, max: 20.0, default: 0.4, curve: Exponential },
+            ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 0.5, curve: Linear },
+        ],
+        EffectType::AutoPan => &[
+            ParamSpec { name: "Rate", unit: "Hz", min: 0.1, max: 10.0, default: 0.4, curve: Exponential },
+            ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 0.7, curve: Linear },
+        ],
+        EffectType::Chorus => &[
+            ParamSpec { name: "Rate", unit: "Hz", min: 0.1, max: 5.0, default: 0.3, curve: Exponential },
+            ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 0.5, curve: Linear },
+        ],
+        EffectType::Flanger => &[
+            ParamSpec { name: "Rate", unit: "Hz", min: 0.05, max: 5.0, default: 0.25, curve: Exponential },
+            ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 0.6, curve: Linear },
+            ParamSpec { name: "Feedback", unit: "", min: 0.0, max: 0.9, default: 0.5, curve: Linear },
+        ],
+        EffectType::Phaser => &[
+            ParamSpec { name: "Rate", unit: "Hz", min: 0.05, max: 4.0, default: 0.3, curve: Exponential },
+            ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 0.7, curve: Linear },
+        ],
         _ => &[],
     }
 }
@@ -131,6 +155,12 @@ pub fn implemented_effects() -> &'static [EffectType] {
         EffectType::DjfxLooper,
         EffectType::Scatter,
         EffectType::Slicer,
+        // PR2: Modulation family
+        EffectType::Tremolo,
+        EffectType::AutoPan,
+        EffectType::Chorus,
+        EffectType::Flanger,
+        EffectType::Phaser,
     ]
 }
 
@@ -151,6 +181,12 @@ pub fn effect_type_from_str(name: &str) -> Option<EffectType> {
         "Reverb" => EffectType::Reverb,
         "Scatter" => EffectType::Scatter,
         "Slicer" => EffectType::Slicer,
+        // PR2: Modulation family
+        "Tremolo" => EffectType::Tremolo,
+        "AutoPan" => EffectType::AutoPan,
+        "Chorus" => EffectType::Chorus,
+        "Flanger" => EffectType::Flanger,
+        "Phaser" => EffectType::Phaser,
         _ => return None,
     };
     Some(effect)
@@ -258,6 +294,13 @@ impl FunDspWrapper {
     }
 }
 
+/// A phase-0 sine LFO source. Unlike `sine()`, whose start phase is seeded from
+/// the node hash (`rnd1(hash)`), this pins the initial phase so that independent
+/// same-rate LFOs (stereo channels, cascaded Phaser stages) stay phase-coherent.
+fn lfo_sine() -> An<Sine> {
+    An(Sine::with_phase(0.0))
+}
+
 /// Instantiate an effect. Returns `None` for catalog variants not implemented
 /// this cycle — NEVER a silent passthrough. Runs off the audio thread, so
 /// allocation here is allowed.
@@ -345,6 +388,105 @@ pub fn create_effect(effect_type: EffectType) -> Option<Box<dyn Effect>> {
             let ch2 = pass() * ((dc(1.0) - var(&d_c)) + (var(&d_d) * gate2));
             let node = ch1 | ch2;
             Some(Box::new(FunDspWrapper::new_with_tempo(Box::new(node), vec![depth], bpm)))
+        }
+        // ── PR2: Modulation family ──────────────────────────────────────────
+        // A controllable LFO is `var(&rate) >> lfo_sine()` (sine in -1..1 at
+        // `rate` Hz). `lfo01 = (sine + 1) * 0.5` maps it to 0..1. Each subgraph
+        // needs its own `var` clone because `var(&x)` consumes the borrow per use.
+        // `lfo_sine()` pins the start phase to 0 so that same-rate LFOs across
+        // channels/stages stay phase-coherent — bare `sine()` seeds its phase from
+        // its node hash (`rnd1(hash)`), which would decohere stereo modulation (and
+        // Phaser stage alignment) the moment anything seeds the graph via `ping()`.
+        // Stereo coherence (Tremolo, AutoPan) and notch alignment (Phaser) depend
+        // on this; do NOT replace `lfo_sine()` with `sine()`.
+        EffectType::Tremolo => {
+            // Amplitude modulation: gain swings between (1 - depth) and 1.
+            // gain = (1 - depth) + depth * lfo01  (matches the Scatter gate shape).
+            let rate = shared(normalize(&effect_metadata(EffectType::Tremolo)[0], 0.4));
+            let depth = shared(0.5);
+            let (r1, r2) = (rate.clone(), rate.clone());
+            let (d1a, d1b, d2a, d2b) = (depth.clone(), depth.clone(), depth.clone(), depth.clone());
+            let lfo1 = ((var(&r1) >> lfo_sine()) + 1.0) * 0.5;
+            let lfo2 = ((var(&r2) >> lfo_sine()) + 1.0) * 0.5;
+            let ch1 = pass() * ((dc(1.0) - var(&d1a)) + (var(&d1b) * lfo1));
+            let ch2 = pass() * ((dc(1.0) - var(&d2a)) + (var(&d2b) * lfo2));
+            let node = ch1 | ch2;
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![rate, depth])))
+        }
+        EffectType::AutoPan => {
+            // Opposed gains swept by the LFO: when sine=+1 the right channel is
+            // full and the left drops by `depth`; sine=-1 mirrors it. Center
+            // (sine=0) attenuates both by depth*0.5 (standard linear pan dip).
+            let rate = shared(normalize(&effect_metadata(EffectType::AutoPan)[0], 0.4));
+            let depth = shared(0.7);
+            let (r_l, r_r) = (rate.clone(), rate.clone());
+            let (d_l, d_r) = (depth.clone(), depth.clone());
+            // left_amount = (sine + 1)/2 ; right_amount = (1 - sine)/2 ; both 0..1
+            let left_amt = ((var(&r_l) >> lfo_sine()) + 1.0) * 0.5;
+            let right_amt = (dc(1.0) - (var(&r_r) >> lfo_sine())) * 0.5;
+            let ch_l = pass() * (dc(1.0) - (var(&d_l) * left_amt));
+            let ch_r = pass() * (dc(1.0) - (var(&d_r) * right_amt));
+            let node = ch_l | ch_r;
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![rate, depth])))
+        }
+        EffectType::Chorus => {
+            // Dry + a single voice read from a delay line whose time is swept
+            // ~15..25 ms by the LFO. `tap` reads input1 (seconds) from the line.
+            let rate = shared(normalize(&effect_metadata(EffectType::Chorus)[0], 0.3));
+            let depth = shared(0.5);
+            let chorus_ch = |r: Shared, d: Shared| {
+                let lfo01 = ((var(&r) >> lfo_sine()) + 1.0) * 0.5;
+                // delay_time = 0.015 + lfo01 * depth * 0.010  (seconds)
+                let delay_time = dc(0.015) + (lfo01 * var(&d) * 0.010);
+                pass() & ((pass() | delay_time) >> tap(0.005, 0.040))
+            };
+            let ch1 = chorus_ch(rate.clone(), depth.clone());
+            let ch2 = chorus_ch(rate.clone(), depth.clone());
+            let node = ch1 | ch2;
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![rate, depth])))
+        }
+        EffectType::Flanger => {
+            // Very short (~1..5 ms) modulated delay with feedback. `feedback(x)`
+            // sums x's previous output back into its input; x here is the
+            // modulated tap scaled by the feedback amount.
+            let rate = shared(normalize(&effect_metadata(EffectType::Flanger)[0], 0.25));
+            let depth = shared(0.6);
+            let fb = shared(0.5);
+            let flanger_ch = |r: Shared, d: Shared, f: Shared| {
+                let lfo01 = ((var(&r) >> lfo_sine()) + 1.0) * 0.5;
+                // delay_time = 0.001 + lfo01 * depth * 0.004  (seconds)
+                let delay_time = dc(0.001) + (lfo01 * var(&d) * 0.004);
+                let loop_node = ((pass() | delay_time) >> tap(0.0005, 0.010)) * var(&f);
+                pass() & feedback(loop_node)
+            };
+            let ch1 = flanger_ch(rate.clone(), depth.clone(), fb.clone());
+            let ch2 = flanger_ch(rate.clone(), depth.clone(), fb.clone());
+            let node = ch1 | ch2;
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![rate, depth, fb])))
+        }
+        EffectType::Phaser => {
+            // Dry + a cascade of 4 swept allpass stages. fundsp's `allpass()` SVF
+            // takes (audio, center-freq Hz, Q); sweeping the center frequency with
+            // the LFO moves the notches. Center sweeps 300..(300 + depth*1500) Hz —
+            // i.e. up to 1800 Hz at depth=1.0, ~1350 Hz at the default depth 0.7.
+            let rate = shared(normalize(&effect_metadata(EffectType::Phaser)[0], 0.3));
+            let depth = shared(0.7);
+            // One allpass stage fed by the shared LFO (its own var clones).
+            let stage = |r: Shared, d: Shared| {
+                let lfo01 = ((var(&r) >> lfo_sine()) + 1.0) * 0.5;
+                // center = 300 + lfo01 * depth * 1500  (Hz)
+                let center = dc(300.0) + (lfo01 * var(&d) * 1500.0);
+                (pass() | center | dc(0.7)) >> allpass()
+            };
+            let phaser_ch = |r: &Shared, d: &Shared| {
+                let cascade = stage(r.clone(), d.clone())
+                    >> stage(r.clone(), d.clone())
+                    >> stage(r.clone(), d.clone())
+                    >> stage(r.clone(), d.clone());
+                pass() & cascade
+            };
+            let node = phaser_ch(&rate, &depth) | phaser_ch(&rate, &depth);
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![rate, depth])))
         }
         // Catalog variants not implemented this cycle: explicit None, never a
         // phantom passthrough effect.
@@ -441,11 +583,16 @@ mod tests {
             EffectType::DjfxLooper,
             EffectType::Scatter,
             EffectType::Slicer,
+            EffectType::Tremolo,
+            EffectType::AutoPan,
+            EffectType::Chorus,
+            EffectType::Flanger,
+            EffectType::Phaser,
         ]
         .into_iter()
         .collect();
         assert_eq!(got, expected);
-        assert_eq!(implemented_effects().len(), 8);
+        assert_eq!(implemented_effects().len(), 13);
     }
 
     #[test]
@@ -457,8 +604,27 @@ mod tests {
             fx.process_frame(&mut frame); // must not panic
         }
         // representative deferred variants return None, never a passthrough
-        assert!(create_effect(EffectType::Chorus).is_none());
+        assert!(create_effect(EffectType::RingMod).is_none());
         assert!(create_effect(EffectType::PitchShifter).is_none());
+    }
+
+    #[test]
+    fn test_modulation_effects_no_alloc() {
+        // PR2: every modulation effect must process a frame without allocating.
+        for &eff in &[
+            EffectType::Tremolo,
+            EffectType::AutoPan,
+            EffectType::Chorus,
+            EffectType::Flanger,
+            EffectType::Phaser,
+        ] {
+            let mut fx = create_effect(eff).expect("modulation effect must instantiate");
+            fx.set_sample_rate(44100);
+            let mut frame = [0.5, -0.5];
+            assert_no_alloc(|| {
+                fx.process_frame(&mut frame);
+            });
+        }
     }
 
     #[test]
@@ -472,6 +638,11 @@ mod tests {
             EffectType::DjfxLooper,
             EffectType::Scatter,
             EffectType::Slicer,
+            EffectType::Tremolo,
+            EffectType::AutoPan,
+            EffectType::Chorus,
+            EffectType::Flanger,
+            EffectType::Phaser,
         ];
 
         for &eff_type in &effect_types {

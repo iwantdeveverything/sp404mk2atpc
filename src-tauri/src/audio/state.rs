@@ -1,14 +1,27 @@
 use rtrb::{Producer, RingBuffer};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use crate::audio::effects::EffectType;
+use crate::audio::effects::{effect_metadata, normalize, EffectType};
 use serde::{Serialize, Deserialize};
 use std::fs;
+
+/// Serde default for `EffectSlotConfig::mix` (fully wet → zero regression vs the
+/// pre-mix behavior).
+fn one() -> f32 {
+    1.0
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EffectSlotConfig {
     pub effect_type: EffectType,
-    pub params: [f32; 3],
+    /// Per-parameter NORMALIZED control values (0..1), one per metadata entry.
+    /// `#[serde(default)]` keeps existing `fx_config.json` files deserializing.
+    #[serde(default)]
+    pub params: Vec<f32>,
+    /// Wet/dry mix (0..1). `#[serde(default = "one")]` so legacy configs load as
+    /// fully wet.
+    #[serde(default = "one")]
+    pub mix: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,7 +90,10 @@ pub enum AudioCommand {
     AddBuffer(usize, Arc<AudioBuffer>),
     PreListen { buffer: Arc<AudioBuffer> },
     SetBusEffect { bus: BusRouting, slot: usize, effect: EffectType },
+    /// `value` carries the REAL (already-normalized) parameter value. The audio
+    /// thread writes it straight to the DSP node with no curve math.
     SetEffectParam { bus: BusRouting, slot: usize, param_id: u8, value: f32 },
+    SetEffectMix { bus: BusRouting, slot: usize, mix: f32 },
     RemoveBusEffect { bus: BusRouting, slot: usize },
     SetTempo { bpm: f32 },
 }
@@ -130,9 +146,13 @@ impl AudioState {
             };
             if let Some(chain) = chain {
                 if slot < chain.slots.len() {
+                    // Seed persisted params from the effect's metadata defaults
+                    // (normalized 0..1), so the slot has one entry per parameter.
+                    let params = effect_metadata(effect).iter().map(|s| s.default).collect();
                     chain.slots[slot] = Some(EffectSlotConfig {
                         effect_type: effect,
-                        params: [0.5, 0.5, 0.5], // default params
+                        params,
+                        mix: 1.0,
                     });
                     config.save();
                 }
@@ -143,7 +163,11 @@ impl AudioState {
         }
     }
 
+    /// `value` is the NORMALIZED 0..1 knob value. Normalization to the real-unit
+    /// range happens HERE (off the audio thread) via the parameter's metadata
+    /// curve; the audio thread only writes the resulting real value.
     pub fn set_effect_param(&self, bus: BusRouting, slot: usize, param_id: u8, value: f32) {
+        let mut real_value = value;
         if let Ok(mut config) = self.fx_config.lock() {
             let chain = match bus {
                 BusRouting::Bus1 => Some(&mut config.bus1),
@@ -153,6 +177,12 @@ impl AudioState {
             if let Some(chain) = chain {
                 if slot < chain.slots.len() {
                     if let Some(ref mut slot_cfg) = chain.slots[slot] {
+                        let specs = effect_metadata(slot_cfg.effect_type);
+                        if let Some(spec) = specs.get(param_id as usize) {
+                            real_value = normalize(spec, value);
+                        }
+                        // Persist the NORMALIZED control value (round-trippable
+                        // through metadata on reload).
                         if (param_id as usize) < slot_cfg.params.len() {
                             slot_cfg.params[param_id as usize] = value;
                             config.save();
@@ -162,7 +192,28 @@ impl AudioState {
             }
         }
         if let Ok(mut tx) = self.command_tx.lock() {
-            let _ = tx.push(AudioCommand::SetEffectParam { bus, slot, param_id, value });
+            let _ = tx.push(AudioCommand::SetEffectParam { bus, slot, param_id, value: real_value });
+        }
+    }
+
+    pub fn set_effect_mix(&self, bus: BusRouting, slot: usize, mix: f32) {
+        if let Ok(mut config) = self.fx_config.lock() {
+            let chain = match bus {
+                BusRouting::Bus1 => Some(&mut config.bus1),
+                BusRouting::Bus2 => Some(&mut config.bus2),
+                BusRouting::Dry => None,
+            };
+            if let Some(chain) = chain {
+                if slot < chain.slots.len() {
+                    if let Some(ref mut slot_cfg) = chain.slots[slot] {
+                        slot_cfg.mix = mix;
+                        config.save();
+                    }
+                }
+            }
+        }
+        if let Ok(mut tx) = self.command_tx.lock() {
+            let _ = tx.push(AudioCommand::SetEffectMix { bus, slot, mix });
         }
     }
 

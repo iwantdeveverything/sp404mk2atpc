@@ -1,5 +1,5 @@
 use crate::audio::state::{AudioBuffer, AudioCommand, AudioState, BusRouting, PlaybackEvent};
-use crate::audio::effects::EffectChain;
+use crate::audio::effects::{effect_metadata, normalize, EffectChain, EffectSlot};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
 use rtrb::Consumer;
@@ -9,6 +9,23 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 const RESAMPLE_BUFFER_SIZE: usize = 48000 * 2 * 60 * 5; // 5 minutes stereo 48k
+
+/// Build an `EffectSlot` from persisted config. Runs OFF the audio thread (engine
+/// init), so it may allocate and call `normalize`. Persisted params are stored
+/// NORMALIZED (0..1); they are mapped to real values here before being applied.
+fn init_effect_slot(cfg: &crate::audio::state::EffectSlotConfig) -> Option<EffectSlot> {
+    let mut fx = crate::audio::effects::create_effect(cfg.effect_type)?;
+    fx.set_tempo(120.0);
+    let specs = effect_metadata(cfg.effect_type);
+    for (pid, &val) in cfg.params.iter().enumerate() {
+        let real = match specs.get(pid) {
+            Some(spec) => normalize(spec, val),
+            None => val,
+        };
+        fx.set_parameter(pid as u8, real);
+    }
+    Some(EffectSlot { effect: fx, mix: cfg.mix })
+}
 
 struct AudioEngineThreadState {
     buffers: HashMap<usize, Arc<AudioBuffer>>,
@@ -43,11 +60,7 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
 
     for (i, slot) in fx_config.bus1.slots.iter().enumerate() {
         if let Some(cfg) = slot {
-            if let Some(mut fx) = crate::audio::effects::create_effect(cfg.effect_type) {
-                fx.set_tempo(120.0);
-                for (pid, &val) in cfg.params.iter().enumerate() {
-                    fx.set_parameter(pid as u8, val);
-                }
+            if let Some(fx) = init_effect_slot(cfg) {
                 bus1_fx.slots[i] = Some(fx);
             }
         }
@@ -55,11 +68,7 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
 
     for (i, slot) in fx_config.bus2.slots.iter().enumerate() {
         if let Some(cfg) = slot {
-            if let Some(mut fx) = crate::audio::effects::create_effect(cfg.effect_type) {
-                fx.set_tempo(120.0);
-                for (pid, &val) in cfg.params.iter().enumerate() {
-                    fx.set_parameter(pid as u8, val);
-                }
+            if let Some(fx) = init_effect_slot(cfg) {
                 bus2_fx.slots[i] = Some(fx);
             }
         }
@@ -138,15 +147,29 @@ fn write_data(
                 };
                 if let Some(chain) = chain {
                     if slot < chain.slots.len() {
-                        let mut new_fx = crate::audio::effects::create_effect(effect);
-                        if let Some(fx) = &mut new_fx {
+                        // Only swap when the variant is implemented. An
+                        // unimplemented variant is a graceful no-op and MUST NOT
+                        // clear a live slot.
+                        if let Some(mut fx) = crate::audio::effects::create_effect(effect) {
                             fx.set_tempo(thread_state.tempo);
+                            // Seed metadata defaults so live audio matches the UI
+                            // knobs and the restart path (`init_effect_slot`).
+                            // `create_effect`'s internal seeds are not guaranteed
+                            // to equal each param's normalized metadata default.
+                            let specs = effect_metadata(effect);
+                            for (pid, spec) in specs.iter().enumerate() {
+                                fx.set_parameter(pid as u8, normalize(spec, spec.default));
+                            }
+                            // A freshly selected effect always starts fully wet,
+                            // matching the persisted default written by
+                            // `state.rs::set_bus_effect` (mix = 1.0).
+                            chain.slots[slot] = Some(EffectSlot { effect: fx, mix: 1.0 });
                         }
-                        chain.slots[slot] = new_fx;
                     }
                 }
             }
             AudioCommand::SetEffectParam { bus, slot, param_id, value } => {
+                // `value` is already the REAL (normalized-off-thread) value.
                 let chain = match bus {
                     BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
                     BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
@@ -154,8 +177,22 @@ fn write_data(
                 };
                 if let Some(chain) = chain {
                     if slot < chain.slots.len() {
-                        if let Some(ref mut fx) = chain.slots[slot] {
-                            fx.set_parameter(param_id, value);
+                        if let Some(ref mut active) = chain.slots[slot] {
+                            active.effect.set_parameter(param_id, value);
+                        }
+                    }
+                }
+            }
+            AudioCommand::SetEffectMix { bus, slot, mix } => {
+                let chain = match bus {
+                    BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
+                    BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
+                    BusRouting::Dry => None,
+                };
+                if let Some(chain) = chain {
+                    if slot < chain.slots.len() {
+                        if let Some(ref mut active) = chain.slots[slot] {
+                            active.mix = mix;
                         }
                     }
                 }
@@ -446,15 +483,49 @@ mod tests {
             tempo: 120.0,
         };
 
-        // Enqueue effect commands
+        // Enqueue effect commands. SetEffectParam carries a normalized 0..1 knob
+        // value that is normalized to the real range off the audio thread.
         state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::Delay);
         state.set_effect_param(crate::audio::state::BusRouting::Bus1, 0, 0, 0.75);
+        state.set_effect_mix(crate::audio::state::BusRouting::Bus1, 0, 0.25);
 
         // Run one frame to process commands
         let mut output = vec![0.0; 2];
         write_data(&mut output, 2, 44100, &mut thread_state);
 
-        // Check if effect was set
+        // SetBusEffect created a live slot; SetEffectMix mutated its mix field.
+        let active = thread_state.bus1_fx.slots[0].as_ref().expect("slot must be populated");
+        assert_eq!(active.mix, 0.25);
+    }
+
+    #[test]
+    fn test_unimplemented_effect_swap_is_noop() {
+        let (state, consumer) = AudioState::new(1024);
+        let mut thread_state = AudioEngineThreadState {
+            buffers: HashMap::new(),
+            active_events: Vec::new(),
+            pre_listen_event: None,
+            command_rx: consumer,
+            resampling_buffer: vec![0.0; 1024],
+            resampling_index: 0,
+            resampling_armed: state.resampling_armed.clone(),
+            bus1_fx: EffectChain::new(),
+            bus2_fx: EffectChain::new(),
+            master_fx: EffectChain::new(),
+            tempo: 120.0,
+        };
+
+        // Install a live, implemented effect first.
+        state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::Delay);
+        let mut output = vec![0.0; 2];
+        write_data(&mut output, 2, 44100, &mut thread_state);
         assert!(thread_state.bus1_fx.slots[0].is_some());
+
+        // Swapping to an unimplemented variant must be a graceful no-op and MUST
+        // NOT clear the live slot.
+        state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::Chorus);
+        let mut output = vec![0.0; 2];
+        write_data(&mut output, 2, 44100, &mut thread_state);
+        assert!(thread_state.bus1_fx.slots[0].is_some(), "unimplemented swap must not clear the slot");
     }
 }

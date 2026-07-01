@@ -1,6 +1,16 @@
 pub mod audio;
 pub mod fs;
 
+// Arm `assert_no_alloc`'s custom allocator so the `*_no_alloc` tests actually
+// enforce the zero-allocation guarantee on the audio path. `AllocDisabler` only
+// forbids allocations inside `assert_no_alloc { .. }` scopes; everywhere else it
+// is a transparent passthrough to the System allocator. Gating it to debug
+// builds (the crate author's recommended pattern) keeps release behavior
+// unchanged while still arming it for `cargo test`, which compiles in debug.
+#[cfg(debug_assertions)]
+#[global_allocator]
+static ALLOC_DISABLER: assert_no_alloc::AllocDisabler = assert_no_alloc::AllocDisabler;
+
 use audio::state::AudioState;
 use audio::effects::{effect_metadata, effect_type_from_str, implemented_effects, Curve};
 use std::path::Path;

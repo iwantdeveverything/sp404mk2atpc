@@ -2,7 +2,7 @@ use crate::audio::state::{AudioBuffer, AudioCommand, AudioState, BusRouting, Pla
 use crate::audio::effects::{effect_metadata, normalize, EffectChain, EffectSlot};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Stream, StreamConfig};
-use rtrb::Consumer;
+use rtrb::{Consumer, Producer, RingBuffer};
 use assert_no_alloc::assert_no_alloc;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -10,12 +10,20 @@ use std::sync::Arc;
 
 const RESAMPLE_BUFFER_SIZE: usize = 48000 * 2 * 60 * 5; // 5 minutes stereo 48k
 
+/// Capacity of the retire ring. A user cannot swap/remove effects faster than a
+/// few per audio block, so this is comfortably oversized; if it ever fills, the
+/// audio thread falls back to dropping inline (still correct, just not RT-ideal).
+const RETIRE_RING_CAPACITY: usize = 64;
+
 /// Build an `EffectSlot` from persisted config. Runs OFF the audio thread (engine
 /// init), so it may allocate and call `normalize`. Persisted params are stored
 /// NORMALIZED (0..1); they are mapped to real values here before being applied.
-fn init_effect_slot(cfg: &crate::audio::state::EffectSlotConfig) -> Option<EffectSlot> {
+/// `sample_rate` is the real device rate so time/LFO-based DSP runs at the
+/// correct rate from the first frame.
+fn init_effect_slot(cfg: &crate::audio::state::EffectSlotConfig, sample_rate: u32, tempo: f32) -> Option<EffectSlot> {
     let mut fx = crate::audio::effects::create_effect(cfg.effect_type)?;
-    fx.set_tempo(120.0);
+    fx.set_sample_rate(sample_rate);
+    fx.set_tempo(tempo);
     let specs = effect_metadata(cfg.effect_type);
     for (pid, &val) in cfg.params.iter().enumerate() {
         let real = match specs.get(pid) {
@@ -25,6 +33,24 @@ fn init_effect_slot(cfg: &crate::audio::state::EffectSlotConfig) -> Option<Effec
         fx.set_parameter(pid as u8, real);
     }
     Some(EffectSlot { effect: fx, mix: cfg.mix })
+}
+
+/// Hand a retired effect slot off the audio thread to be dropped elsewhere. The
+/// `EffectSlot` is MOVED into the ring by value (a fat-pointer + `f32` memcpy — no
+/// allocation, and crucially no `Box::new`/`box_free` on the audio thread); the
+/// heap teardown of the effect happens on the drain thread. If the ring is full
+/// the slot is dropped inline as a bounded fallback (the only path on which any
+/// deallocation can touch the audio thread — see `RETIRE_RING_CAPACITY`).
+#[inline]
+fn retire_slot(retire_tx: &mut Option<Producer<EffectSlot>>, slot: EffectSlot) {
+    match retire_tx {
+        Some(tx) => {
+            // On overflow, `push` returns the value back; dropping it here is the
+            // documented fallback (rare, bounded by RETIRE_RING_CAPACITY).
+            let _ = tx.push(slot);
+        }
+        None => drop(slot),
+    }
 }
 
 struct AudioEngineThreadState {
@@ -39,6 +65,10 @@ struct AudioEngineThreadState {
     bus2_fx: EffectChain,
     master_fx: EffectChain,
     tempo: f32,
+    /// Producer end of the retire ring. Retired effect slots are pushed here so
+    /// their heap teardown runs OFF the audio thread. `None` in unit tests that
+    /// don't exercise retirement.
+    retire_tx: Option<Producer<EffectSlot>>,
 }
 
 pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -> Result<Stream, String> {
@@ -52,6 +82,11 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
     let channels = stream_config.channels as usize;
     let sample_rate = stream_config.sample_rate;
 
+    // Publish the real device rate so OFF-thread effect builds (effect swaps via
+    // AudioState::set_bus_effect) use it instead of fundsp's 44.1 kHz default.
+    state.sample_rate.store(sample_rate, Ordering::Relaxed);
+    let init_tempo = state.tempo.lock().map(|t| *t).unwrap_or(120.0);
+
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
     let fx_config = state.fx_config.lock().unwrap().clone();
@@ -60,7 +95,7 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
 
     for (i, slot) in fx_config.bus1.slots.iter().enumerate() {
         if let Some(cfg) = slot {
-            if let Some(fx) = init_effect_slot(cfg) {
+            if let Some(fx) = init_effect_slot(cfg, sample_rate, init_tempo) {
                 bus1_fx.slots[i] = Some(fx);
             }
         }
@@ -68,11 +103,28 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
 
     for (i, slot) in fx_config.bus2.slots.iter().enumerate() {
         if let Some(cfg) = slot {
-            if let Some(fx) = init_effect_slot(cfg) {
+            if let Some(fx) = init_effect_slot(cfg, sample_rate, init_tempo) {
                 bus2_fx.slots[i] = Some(fx);
             }
         }
     }
+
+    // Retire ring: retired effect slots travel from the audio thread to a
+    // dedicated drain thread, so heap teardown (Box/ring-buffer dealloc) never
+    // runs in the cpal callback.
+    let (retire_tx, mut retire_rx) = RingBuffer::<EffectSlot>::new(RETIRE_RING_CAPACITY);
+    std::thread::Builder::new()
+        .name("fx-retire".into())
+        .spawn(move || loop {
+            while let Ok(slot) = retire_rx.pop() {
+                drop(slot); // heap teardown OFF the audio thread
+            }
+            if retire_rx.is_abandoned() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        })
+        .expect("failed to spawn fx-retire thread");
 
     let mut thread_state = AudioEngineThreadState {
         buffers: HashMap::new(),
@@ -85,7 +137,8 @@ pub fn start_audio_engine(state: AudioState, consumer: Consumer<AudioCommand>) -
         bus1_fx,
         bus2_fx,
         master_fx: EffectChain::new(),
-        tempo: 120.0,
+        tempo: init_tempo,
+        retire_tx: Some(retire_tx),
     };
 
     let stream = match config.sample_format() {
@@ -139,7 +192,12 @@ fn write_data(
                     });
                 }
             }
-            AudioCommand::SetBusEffect { bus, slot, effect } => {
+            AudioCommand::SetBusEffect { bus, slot, slot_fx } => {
+                // The effect arrives FULLY BUILT off the audio thread (alloc,
+                // sample-rate, tempo, default params already applied). The audio
+                // thread only moves it in and retires the previous slot off-thread,
+                // so no allocation or deallocation happens in this callback.
+                let retire_tx = &mut thread_state.retire_tx;
                 let chain = match bus {
                     BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
                     BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
@@ -147,25 +205,19 @@ fn write_data(
                 };
                 if let Some(chain) = chain {
                     if slot < chain.slots.len() {
-                        // Only swap when the variant is implemented. An
-                        // unimplemented variant is a graceful no-op and MUST NOT
-                        // clear a live slot.
-                        if let Some(mut fx) = crate::audio::effects::create_effect(effect) {
-                            fx.set_tempo(thread_state.tempo);
-                            // Seed metadata defaults so live audio matches the UI
-                            // knobs and the restart path (`init_effect_slot`).
-                            // `create_effect`'s internal seeds are not guaranteed
-                            // to equal each param's normalized metadata default.
-                            let specs = effect_metadata(effect);
-                            for (pid, spec) in specs.iter().enumerate() {
-                                fx.set_parameter(pid as u8, normalize(spec, spec.default));
-                            }
-                            // A freshly selected effect always starts fully wet,
-                            // matching the persisted default written by
-                            // `state.rs::set_bus_effect` (mix = 1.0).
-                            chain.slots[slot] = Some(EffectSlot { effect: fx, mix: 1.0 });
+                        // `replace` returns the previous slot BY VALUE (it is not
+                        // dropped here); we hand it to the retire ring. Both the
+                        // install and the retire are pure moves — no alloc/dealloc.
+                        if let Some(old) = chain.slots[slot].replace(slot_fx) {
+                            retire_slot(retire_tx, old);
                         }
+                    } else {
+                        // Out-of-range slot: retire the unused build off-thread.
+                        retire_slot(retire_tx, slot_fx);
                     }
+                } else {
+                    // Dry bus has no chain; retire the unused build off-thread.
+                    retire_slot(retire_tx, slot_fx);
                 }
             }
             AudioCommand::SetEffectParam { bus, slot, param_id, value } => {
@@ -198,6 +250,7 @@ fn write_data(
                 }
             }
             AudioCommand::RemoveBusEffect { bus, slot } => {
+                let retire_tx = &mut thread_state.retire_tx;
                 let chain = match bus {
                     BusRouting::Bus1 => Some(&mut thread_state.bus1_fx),
                     BusRouting::Bus2 => Some(&mut thread_state.bus2_fx),
@@ -205,7 +258,12 @@ fn write_data(
                 };
                 if let Some(chain) = chain {
                     if slot < chain.slots.len() {
-                        chain.slots[slot] = None;
+                        // Retire the removed effect off-thread (its heap teardown
+                        // must not run in the audio callback). `take` moves the
+                        // slot out by value — no alloc/dealloc here.
+                        if let Some(old) = chain.slots[slot].take() {
+                            retire_slot(retire_tx, old);
+                        }
                     }
                 }
             }
@@ -352,6 +410,7 @@ mod tests {
             bus2_fx: EffectChain::new(),
             master_fx: EffectChain::new(),
             tempo: 120.0,
+            retire_tx: None,
         };
 
         state.add_buffer(
@@ -395,6 +454,7 @@ mod tests {
             bus2_fx: EffectChain::new(),
             master_fx: EffectChain::new(),
             tempo: 120.0,
+            retire_tx: None,
         };
 
         state.add_buffer(
@@ -429,6 +489,7 @@ mod tests {
             bus2_fx: EffectChain::new(),
             master_fx: EffectChain::new(),
             tempo: 120.0,
+            retire_tx: None,
         };
 
         state.add_buffer(
@@ -481,6 +542,7 @@ mod tests {
             bus2_fx: EffectChain::new(),
             master_fx: EffectChain::new(),
             tempo: 120.0,
+            retire_tx: None,
         };
 
         // Enqueue effect commands. SetEffectParam carries a normalized 0..1 knob
@@ -513,19 +575,97 @@ mod tests {
             bus2_fx: EffectChain::new(),
             master_fx: EffectChain::new(),
             tempo: 120.0,
+            retire_tx: None,
         };
 
-        // Install a live, implemented effect first.
+        // Install a live, implemented effect first (set its mix to a recognizable
+        // value so we can prove the original slot survives the no-op swap).
         state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::Delay);
+        state.set_effect_mix(crate::audio::state::BusRouting::Bus1, 0, 0.42);
         let mut output = vec![0.0; 2];
         write_data(&mut output, 2, 44100, &mut thread_state);
         assert!(thread_state.bus1_fx.slots[0].is_some());
 
-        // Swapping to an unimplemented variant must be a graceful no-op and MUST
-        // NOT clear the live slot.
-        state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::Chorus);
+        // Swapping to an UNIMPLEMENTED variant must be a graceful no-op: it never
+        // enqueues a command, so the live slot is untouched. `RingMod` is a real
+        // deferred variant (`create_effect` returns `None`); do NOT use a variant
+        // that later PRs implement, or this test silently stops testing the no-op.
+        state.set_bus_effect(crate::audio::state::BusRouting::Bus1, 0, crate::audio::effects::EffectType::RingMod);
         let mut output = vec![0.0; 2];
         write_data(&mut output, 2, 44100, &mut thread_state);
-        assert!(thread_state.bus1_fx.slots[0].is_some(), "unimplemented swap must not clear the slot");
+        let active = thread_state.bus1_fx.slots[0]
+            .as_ref()
+            .expect("unimplemented swap must not clear the slot");
+        assert_eq!(active.mix, 0.42, "the original effect slot must survive a no-op swap");
+    }
+
+    /// Helper: a thread_state with a live retire ring whose drain end is returned
+    /// so a test can assert how many slots were retired off the audio thread.
+    fn thread_state_with_retire(
+        state: &AudioState,
+        consumer: Consumer<AudioCommand>,
+    ) -> (AudioEngineThreadState, Consumer<EffectSlot>) {
+        let (retire_tx, retire_rx) = RingBuffer::<EffectSlot>::new(RETIRE_RING_CAPACITY);
+        let ts = AudioEngineThreadState {
+            buffers: HashMap::new(),
+            active_events: Vec::new(),
+            pre_listen_event: None,
+            command_rx: consumer,
+            resampling_buffer: vec![0.0; 1024],
+            resampling_index: 0,
+            resampling_armed: state.resampling_armed.clone(),
+            bus1_fx: EffectChain::new(),
+            bus2_fx: EffectChain::new(),
+            master_fx: EffectChain::new(),
+            tempo: 120.0,
+            retire_tx: Some(retire_tx),
+        };
+        (ts, retire_rx)
+    }
+
+    #[test]
+    fn test_effect_swap_installs_new_and_retires_old_off_thread() {
+        let (state, consumer) = AudioState::new(1024);
+        let (mut thread_state, mut retire_rx) = thread_state_with_retire(&state, consumer);
+
+        // Install Delay, then swap to a different implemented effect (Reverb).
+        state.set_bus_effect(BusRouting::Bus1, 0, crate::audio::effects::EffectType::Delay);
+        let mut output = vec![0.0; 2];
+        write_data(&mut output, 2, 44100, &mut thread_state);
+        assert!(thread_state.bus1_fx.slots[0].is_some(), "first effect must install");
+        assert!(retire_rx.pop().is_err(), "installing into an empty slot retires nothing");
+
+        // Swap installs the new build and hands the OLD slot to the retire ring.
+        // The whole command-drain + swap MUST be allocation- and deallocation-free
+        // on the audio thread: the ready effect is moved in, the old one moved out
+        // to the ring — no `Box::new`, no inline drop. `assert_no_alloc` proves it
+        // (this guard is exactly what a naive `Box<EffectSlot>` retire path fails).
+        state.set_bus_effect(BusRouting::Bus1, 0, crate::audio::effects::EffectType::Reverb);
+        let mut output = vec![0.0; 2];
+        assert_no_alloc(|| {
+            write_data(&mut output, 2, 44100, &mut thread_state);
+        });
+        assert!(thread_state.bus1_fx.slots[0].is_some(), "swapped-in effect must be present");
+        assert!(retire_rx.pop().is_ok(), "the swapped-out effect must be retired off-thread");
+    }
+
+    #[test]
+    fn test_remove_effect_retires_off_thread() {
+        let (state, consumer) = AudioState::new(1024);
+        let (mut thread_state, mut retire_rx) = thread_state_with_retire(&state, consumer);
+
+        state.set_bus_effect(BusRouting::Bus1, 0, crate::audio::effects::EffectType::Delay);
+        let mut output = vec![0.0; 2];
+        write_data(&mut output, 2, 44100, &mut thread_state);
+
+        // Removal moves the slot out to the retire ring — also alloc/dealloc-free
+        // on the audio thread.
+        state.remove_bus_effect(BusRouting::Bus1, 0);
+        let mut output = vec![0.0; 2];
+        assert_no_alloc(|| {
+            write_data(&mut output, 2, 44100, &mut thread_state);
+        });
+        assert!(thread_state.bus1_fx.slots[0].is_none(), "removed slot must be empty");
+        assert!(retire_rx.pop().is_ok(), "the removed effect must be retired off-thread");
     }
 }

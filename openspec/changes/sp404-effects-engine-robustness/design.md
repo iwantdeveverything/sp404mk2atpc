@@ -80,8 +80,15 @@ pub struct EffectSlotConfig {
 ```
 
 `Effect` trait is UNCHANGED. `create_effect`'s `_ => Some(pass())` arm becomes
-`_ => None`. `engine.rs` `SetBusEffect` only replaces the slot when `create_effect`
-returns `Some` (unimplemented swap = graceful no-op, never clears a live slot).
+`_ => None`. **Effects are built OFF the audio thread** (per the Zero Allocation
+Processing requirement): `AudioState::set_bus_effect` calls `create_effect` +
+`set_sample_rate(real)` + `set_tempo` + normalized default params, then enqueues a
+`SetBusEffect { slot_fx: Box<EffectSlot> }` carrying the ready effect. An
+unimplemented variant yields `None` → no command enqueued (graceful no-op, never
+clears a live slot). The audio thread only *moves* the ready slot into place and
+hands the previous slot to a **retire ring** (drained by a dedicated `fx-retire`
+thread) so neither allocation nor deallocation runs in the cpal callback. The real
+device sample rate is published into `AudioState` on engine startup.
 `lib.rs` `set_bus_effect` string map extends to all 20 implemented variants; unknown
 strings still `Err`. New Tauri commands: `list_effects()` and
 `get_effect_parameters(effect) -> Vec<ParamSpecDto>` (pure, never enqueue a command).

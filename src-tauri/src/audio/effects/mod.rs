@@ -139,6 +139,23 @@ pub fn effect_metadata(effect_type: EffectType) -> &'static [ParamSpec] {
             ParamSpec { name: "Rate", unit: "Hz", min: 0.05, max: 4.0, default: 0.3, curve: Exponential },
             ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 0.7, curve: Linear },
         ],
+        // PR3: Dynamics + tone family.
+        EffectType::Compressor => &[
+            ParamSpec { name: "Threshold", unit: "dB", min: -60.0, max: 0.0, default: 0.7, curve: Linear },
+            ParamSpec { name: "Ratio", unit: ":1", min: 1.0, max: 20.0, default: 0.2, curve: Linear },
+            ParamSpec { name: "Attack", unit: "ms", min: 0.1, max: 100.0, default: 0.2, curve: Exponential },
+            ParamSpec { name: "Release", unit: "ms", min: 5.0, max: 1000.0, default: 0.4, curve: Exponential },
+        ],
+        EffectType::Equalizer => &[
+            ParamSpec { name: "Low", unit: "", min: 0.0, max: 2.0, default: 0.5, curve: Linear },
+            ParamSpec { name: "Mid", unit: "", min: 0.0, max: 2.0, default: 0.5, curve: Linear },
+            ParamSpec { name: "High", unit: "", min: 0.0, max: 2.0, default: 0.5, curve: Linear },
+        ],
+        EffectType::Wah => &[
+            ParamSpec { name: "Freq", unit: "Hz", min: 200.0, max: 3000.0, default: 0.4, curve: Exponential },
+            ParamSpec { name: "Resonance", unit: "", min: 0.5, max: 12.0, default: 0.6, curve: Linear },
+            ParamSpec { name: "Depth", unit: "", min: 0.0, max: 1.0, default: 1.0, curve: Linear },
+        ],
         _ => &[],
     }
 }
@@ -161,6 +178,10 @@ pub fn implemented_effects() -> &'static [EffectType] {
         EffectType::Chorus,
         EffectType::Flanger,
         EffectType::Phaser,
+        // PR3: Dynamics + tone family
+        EffectType::Compressor,
+        EffectType::Equalizer,
+        EffectType::Wah,
     ]
 }
 
@@ -187,6 +208,10 @@ pub fn effect_type_from_str(name: &str) -> Option<EffectType> {
         "Chorus" => EffectType::Chorus,
         "Flanger" => EffectType::Flanger,
         "Phaser" => EffectType::Phaser,
+        // PR3: Dynamics + tone family
+        "Compressor" => EffectType::Compressor,
+        "Equalizer" => EffectType::Equalizer,
+        "Wah" => EffectType::Wah,
         _ => return None,
     };
     Some(effect)
@@ -291,6 +316,208 @@ impl FunDspWrapper {
 
     pub fn new_with_tempo(node: Box<dyn AudioUnit + Send + Sync>, params: Vec<Shared>, tempo_param: Shared) -> Self {
         Self { node, params, tempo_param: Some(tempo_param) }
+    }
+}
+
+/// Hand-written feed-forward compressor. FunDSP's dynamics primitives are weak,
+/// so this implements the `Effect` trait directly with pre-allocated per-channel
+/// envelope state. `process_frame` performs only scalar FP work — no allocation.
+///
+/// Signal path per frame: peak detect (max abs across channels) → one-pole
+/// envelope follower (attack/release coeffs `exp(-1/(t·sr))`) → soft-knee gain
+/// computer (threshold, ratio, fixed knee) → apply the resulting linear gain to
+/// both channels. Coeffs are recomputed off the audio thread whenever a time
+/// constant or the sample rate changes.
+pub struct Compressor {
+    sample_rate: f32,
+    // Parameters in real units.
+    threshold_db: f32,
+    ratio: f32,
+    attack_ms: f32,
+    release_ms: f32,
+    // Derived one-pole smoothing coefficients (recomputed on param/SR change).
+    attack_coeff: f32,
+    release_coeff: f32,
+    // Pre-allocated running envelope (linear peak estimate). Shared across the
+    // stereo pair so both channels get identical gain (no image shift).
+    envelope: f32,
+    // Fixed soft-knee width in dB.
+    knee_db: f32,
+}
+
+impl Compressor {
+    /// One-pole smoothing coefficient for a time constant `t_ms` (milliseconds)
+    /// at `sample_rate` Hz: `exp(-1 / (t_seconds * sample_rate))`. Pure scalar FP,
+    /// safe to call off the audio thread. `t_ms == 0` collapses to instantaneous.
+    pub fn envelope_coeff(t_ms: f32, sample_rate: f32) -> f32 {
+        let t_seconds = t_ms / 1000.0;
+        if t_seconds <= 0.0 || sample_rate <= 0.0 {
+            return 0.0;
+        }
+        (-1.0 / (t_seconds * sample_rate)).exp()
+    }
+
+    pub fn new(sample_rate: u32) -> Self {
+        let md = effect_metadata(EffectType::Compressor);
+        let mut c = Self {
+            sample_rate: sample_rate as f32,
+            threshold_db: normalize(&md[0], md[0].default),
+            ratio: normalize(&md[1], md[1].default),
+            attack_ms: normalize(&md[2], md[2].default),
+            release_ms: normalize(&md[3], md[3].default),
+            attack_coeff: 0.0,
+            release_coeff: 0.0,
+            envelope: 0.0,
+            knee_db: 6.0,
+        };
+        c.recompute_coeffs();
+        c
+    }
+
+    fn recompute_coeffs(&mut self) {
+        self.attack_coeff = Self::envelope_coeff(self.attack_ms, self.sample_rate);
+        self.release_coeff = Self::envelope_coeff(self.release_ms, self.sample_rate);
+    }
+}
+
+impl Effect for Compressor {
+    fn process_frame(&mut self, frame: &mut [f32; 2]) {
+        // Peak detect: rectified max across the stereo pair.
+        let peak = frame[0].abs().max(frame[1].abs());
+        // One-pole envelope follower: attack when rising, release when falling.
+        let coeff = if peak > self.envelope { self.attack_coeff } else { self.release_coeff };
+        self.envelope = coeff * self.envelope + (1.0 - coeff) * peak;
+
+        // Convert envelope to dBFS (guard against log of zero).
+        let env_db = 20.0 * (self.envelope.max(1e-9)).log10();
+
+        // Soft-knee gain computer: how many dB to reduce the output.
+        let half_knee = self.knee_db * 0.5;
+        let over = env_db - self.threshold_db;
+        let gain_reduction_db = if over <= -half_knee {
+            0.0
+        } else if over >= half_knee {
+            over * (1.0 - 1.0 / self.ratio)
+        } else {
+            // Quadratic interpolation across the knee region.
+            let x = over + half_knee; // 0..knee_db
+            (1.0 - 1.0 / self.ratio) * (x * x) / (2.0 * self.knee_db)
+        };
+
+        let gain = 10.0_f32.powf(-gain_reduction_db / 20.0);
+        frame[0] *= gain;
+        frame[1] *= gain;
+    }
+
+    fn set_parameter(&mut self, param_id: u8, value: f32) {
+        match param_id {
+            0 => self.threshold_db = value,
+            1 => self.ratio = value.max(1.0),
+            2 => {
+                self.attack_ms = value;
+                self.recompute_coeffs();
+            }
+            3 => {
+                self.release_ms = value;
+                self.recompute_coeffs();
+            }
+            _ => {}
+        }
+    }
+
+    fn reset(&mut self) {
+        self.envelope = 0.0;
+    }
+
+    fn set_sample_rate(&mut self, rate: u32) {
+        self.sample_rate = rate as f32;
+        self.recompute_coeffs();
+    }
+}
+
+/// Hand-written resonant wah built on a Chamberlin state-variable filter. The
+/// bandpass output is emphasized around a swept center frequency. State is
+/// pre-allocated per channel so `process_frame` only does scalar FP work.
+///
+/// The center frequency comes directly from the `Freq` parameter (an LFO or
+/// envelope follower can drive it in a later cycle). `Resonance` maps to the SVF
+/// damping term, and `Depth` blends the bandpass emphasis against the dry signal
+/// inside the effect (independent of the slot-level wet/dry mix).
+pub struct Wah {
+    sample_rate: f32,
+    center_hz: f32,
+    resonance: f32,
+    depth: f32,
+    // Derived SVF coefficients (recomputed on param / SR change).
+    f: f32, // frequency coefficient
+    q: f32, // damping coefficient (1/Q)
+    // Pre-allocated Chamberlin SVF state, one pair per channel.
+    low: [f32; 2],
+    band: [f32; 2],
+}
+
+impl Wah {
+    pub fn new(sample_rate: u32) -> Self {
+        let md = effect_metadata(EffectType::Wah);
+        let mut w = Self {
+            sample_rate: sample_rate as f32,
+            center_hz: normalize(&md[0], md[0].default),
+            resonance: normalize(&md[1], md[1].default),
+            depth: normalize(&md[2], md[2].default),
+            f: 0.0,
+            q: 0.0,
+            low: [0.0; 2],
+            band: [0.0; 2],
+        };
+        w.recompute_coeffs();
+        w
+    }
+
+    fn recompute_coeffs(&mut self) {
+        // Chamberlin SVF frequency coefficient: f = 2*sin(pi*fc/sr), clamped for
+        // stability (valid roughly while fc < sr/6). Damping = 1/Q.
+        let fc = self.center_hz.clamp(20.0, self.sample_rate / 6.0);
+        self.f = 2.0 * (std::f32::consts::PI * fc / self.sample_rate).sin();
+        self.q = 1.0 / self.resonance.max(0.5);
+    }
+}
+
+impl Effect for Wah {
+    fn process_frame(&mut self, frame: &mut [f32; 2]) {
+        for ch in 0..2 {
+            let input = frame[ch];
+            // One pass of the Chamberlin SVF.
+            let high = input - self.low[ch] - self.q * self.band[ch];
+            self.band[ch] += self.f * high;
+            self.low[ch] += self.f * self.band[ch];
+            // Blend the resonant bandpass against the dry signal by `depth`.
+            frame[ch] = input * (1.0 - self.depth) + self.band[ch] * self.depth;
+        }
+    }
+
+    fn set_parameter(&mut self, param_id: u8, value: f32) {
+        match param_id {
+            0 => {
+                self.center_hz = value;
+                self.recompute_coeffs();
+            }
+            1 => {
+                self.resonance = value;
+                self.recompute_coeffs();
+            }
+            2 => self.depth = value.clamp(0.0, 1.0),
+            _ => {}
+        }
+    }
+
+    fn reset(&mut self) {
+        self.low = [0.0; 2];
+        self.band = [0.0; 2];
+    }
+
+    fn set_sample_rate(&mut self, rate: u32) {
+        self.sample_rate = rate as f32;
+        self.recompute_coeffs();
     }
 }
 
@@ -488,6 +715,23 @@ pub fn create_effect(effect_type: EffectType) -> Option<Box<dyn Effect>> {
             let node = phaser_ch(&rate, &depth) | phaser_ch(&rate, &depth);
             Some(Box::new(FunDspWrapper::new(Box::new(node), vec![rate, depth])))
         }
+        // ── PR3: Dynamics + tone family ──────────────────────────────────────
+        EffectType::Compressor => Some(Box::new(Compressor::new(44100))),
+        EffectType::Equalizer => {
+            // Three-band tone shaper reusing the proven Isolator shelf/bell
+            // cascade, but centered on musical EQ bands (low shelf 120 Hz, mid
+            // bell 1.2 kHz, high shelf 6 kHz). Each band's gain is a 0..2 linear
+            // multiplier (1.0 = flat), driven by a Shared param.
+            let low = shared(1.0);
+            let mid = shared(1.0);
+            let high = shared(1.0);
+            let eq_ch = || (pass() | dc(120.0) | dc(1.0) | var(&low)) >> lowshelf()
+                         >> (pass() | dc(1200.0) | dc(1.0) | var(&mid)) >> bell()
+                         >> (pass() | dc(6000.0) | dc(1.0) | var(&high)) >> highshelf();
+            let node = eq_ch() | eq_ch();
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![low, mid, high])))
+        }
+        EffectType::Wah => Some(Box::new(Wah::new(44100))),
         // Catalog variants not implemented this cycle: explicit None, never a
         // phantom passthrough effect.
         _ => None,
@@ -588,11 +832,14 @@ mod tests {
             EffectType::Chorus,
             EffectType::Flanger,
             EffectType::Phaser,
+            EffectType::Compressor,
+            EffectType::Equalizer,
+            EffectType::Wah,
         ]
         .into_iter()
         .collect();
         assert_eq!(got, expected);
-        assert_eq!(implemented_effects().len(), 13);
+        assert_eq!(implemented_effects().len(), 16);
     }
 
     #[test]
@@ -656,6 +903,125 @@ mod tests {
             fx.set_parameter(0, 0.5);
             fx.reset();
         }
+    }
+
+    // ── PR3: Dynamics + tone family ─────────────────────────────────────────
+
+    /// Drive a compressor to steady state with a constant-amplitude signal and
+    /// return the linear gain it applies (output / input) once the envelope has
+    /// settled. Used to assert gain-reduction monotonicity.
+    fn compressor_settled_gain(threshold_db: f32, ratio: f32, amp: f32) -> f32 {
+        let mut c = Compressor::new(48000);
+        c.set_parameter(0, threshold_db);
+        c.set_parameter(1, ratio);
+        c.set_parameter(2, 5.0); // attack ms
+        c.set_parameter(3, 50.0); // release ms
+        let mut out = [0.0_f32; 2];
+        for _ in 0..20000 {
+            out = [amp, amp];
+            c.process_frame(&mut out);
+        }
+        out[0] / amp
+    }
+
+    #[test]
+    fn test_compressor_envelope_coeff() {
+        // coeff = exp(-1 / (t_seconds * sample_rate)); t_seconds = ms / 1000.
+        let sr = 48000.0;
+        let coeff = Compressor::envelope_coeff(10.0, sr);
+        let expected = (-1.0_f32 / (0.010 * sr)).exp();
+        assert!((coeff - expected).abs() < 1e-6, "got {coeff}, expected {expected}");
+        // Longer time constant -> coeff closer to 1 (slower response).
+        let slow = Compressor::envelope_coeff(100.0, sr);
+        let fast = Compressor::envelope_coeff(1.0, sr);
+        assert!(slow > coeff && coeff > fast, "coeffs must increase with time");
+        assert!(slow < 1.0 && fast > 0.0);
+    }
+
+    #[test]
+    fn test_compressor_gain_reduction_monotonic() {
+        // Both inputs are above the -20 dB threshold. The louder input is further
+        // over the threshold, so it MUST receive more gain reduction (smaller gain).
+        let quiet = compressor_settled_gain(-20.0, 4.0, 0.3);
+        let loud = compressor_settled_gain(-20.0, 4.0, 0.6);
+        assert!(quiet <= 1.0 + 1e-4, "gain must never exceed unity, got {quiet}");
+        assert!(loud < quiet, "louder input must be reduced more: loud={loud}, quiet={quiet}");
+        // A signal below threshold must pass at (approximately) unity gain.
+        let below = compressor_settled_gain(-20.0, 4.0, 0.02); // -34 dB, under threshold
+        assert!((below - 1.0).abs() < 1e-2, "below-threshold gain must be ~unity, got {below}");
+    }
+
+    #[test]
+    fn test_compressor_no_alloc() {
+        let mut fx = create_effect(EffectType::Compressor).expect("Compressor must instantiate");
+        fx.set_sample_rate(44100);
+        let mut frame = [0.7, -0.7];
+        assert_no_alloc(|| {
+            fx.process_frame(&mut frame);
+        });
+    }
+
+    #[test]
+    fn test_equalizer_instantiates_and_processes() {
+        let mut fx = create_effect(EffectType::Equalizer).expect("Equalizer must instantiate");
+        fx.set_sample_rate(48000);
+        // At the default (flat) settings a non-zero input must yield a finite,
+        // non-silent output — proves the cascade is wired and not a no-op/NaN.
+        let mut frame = [0.5, -0.5];
+        for _ in 0..64 {
+            frame = [0.5, -0.5];
+            fx.process_frame(&mut frame);
+        }
+        assert!(frame[0].is_finite() && frame[1].is_finite());
+        assert!(frame[0].abs() > 1e-3, "flat EQ must pass signal, got {}", frame[0]);
+    }
+
+    #[test]
+    fn test_equalizer_no_alloc() {
+        let mut fx = create_effect(EffectType::Equalizer).expect("Equalizer must instantiate");
+        fx.set_sample_rate(44100);
+        let mut frame = [0.5, -0.5];
+        assert_no_alloc(|| {
+            fx.process_frame(&mut frame);
+        });
+    }
+
+    #[test]
+    fn test_wah_bandpass_shape() {
+        // A resonant bandpass centered near ~800 Hz should pass a tone at its
+        // center frequency far more strongly than one far below it (e.g. 50 Hz).
+        fn rms_at(freq: f32) -> f32 {
+            let sr = 48000.0;
+            let mut w = Wah::new(48000);
+            w.set_parameter(0, 800.0); // center Hz
+            w.set_parameter(1, 8.0); // resonance
+            w.set_parameter(2, 1.0); // full depth
+            let mut acc = 0.0;
+            let n = 4800;
+            // warm up the filter state, then measure.
+            for i in 0..(n * 2) {
+                let s = (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin();
+                let mut frame = [s, s];
+                w.process_frame(&mut frame);
+                if i >= n {
+                    acc += frame[0] * frame[0];
+                }
+            }
+            (acc / n as f32).sqrt()
+        }
+        let at_center = rms_at(800.0);
+        let below = rms_at(50.0);
+        assert!(at_center > below * 2.0, "center {at_center} must dominate low {below}");
+    }
+
+    #[test]
+    fn test_wah_no_alloc() {
+        let mut fx = create_effect(EffectType::Wah).expect("Wah must instantiate");
+        fx.set_sample_rate(44100);
+        let mut frame = [0.5, -0.5];
+        assert_no_alloc(|| {
+            fx.process_frame(&mut frame);
+        });
     }
 
     #[test]

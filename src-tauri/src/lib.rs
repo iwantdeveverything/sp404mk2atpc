@@ -43,6 +43,10 @@ fn effect_label(effect: audio::effects::EffectType) -> &'static str {
         EffectType::Chorus => "Chorus",
         EffectType::Flanger => "Flanger",
         EffectType::Phaser => "Phaser",
+        // PR3: Dynamics + tone family
+        EffectType::Compressor => "Compressor",
+        EffectType::Equalizer => "Equalizer",
+        EffectType::Wah => "Wah",
         _ => "",
     }
 }

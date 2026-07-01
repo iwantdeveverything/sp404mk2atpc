@@ -178,6 +178,10 @@ pub fn implemented_effects() -> &'static [EffectType] {
         EffectType::Chorus,
         EffectType::Flanger,
         EffectType::Phaser,
+        // PR3: Dynamics + tone family
+        EffectType::Compressor,
+        EffectType::Equalizer,
+        EffectType::Wah,
     ]
 }
 
@@ -204,6 +208,10 @@ pub fn effect_type_from_str(name: &str) -> Option<EffectType> {
         "Chorus" => EffectType::Chorus,
         "Flanger" => EffectType::Flanger,
         "Phaser" => EffectType::Phaser,
+        // PR3: Dynamics + tone family
+        "Compressor" => EffectType::Compressor,
+        "Equalizer" => EffectType::Equalizer,
+        "Wah" => EffectType::Wah,
         _ => return None,
     };
     Some(effect)
@@ -824,11 +832,14 @@ mod tests {
             EffectType::Chorus,
             EffectType::Flanger,
             EffectType::Phaser,
+            EffectType::Compressor,
+            EffectType::Equalizer,
+            EffectType::Wah,
         ]
         .into_iter()
         .collect();
         assert_eq!(got, expected);
-        assert_eq!(implemented_effects().len(), 13);
+        assert_eq!(implemented_effects().len(), 16);
     }
 
     #[test]

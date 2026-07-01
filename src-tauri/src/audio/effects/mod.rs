@@ -427,6 +427,92 @@ impl Effect for Compressor {
     }
 }
 
+/// Hand-written resonant wah built on a Chamberlin state-variable filter. The
+/// bandpass output is emphasized around a swept center frequency. State is
+/// pre-allocated per channel so `process_frame` only does scalar FP work.
+///
+/// The center frequency comes directly from the `Freq` parameter (an LFO or
+/// envelope follower can drive it in a later cycle). `Resonance` maps to the SVF
+/// damping term, and `Depth` blends the bandpass emphasis against the dry signal
+/// inside the effect (independent of the slot-level wet/dry mix).
+pub struct Wah {
+    sample_rate: f32,
+    center_hz: f32,
+    resonance: f32,
+    depth: f32,
+    // Derived SVF coefficients (recomputed on param / SR change).
+    f: f32, // frequency coefficient
+    q: f32, // damping coefficient (1/Q)
+    // Pre-allocated Chamberlin SVF state, one pair per channel.
+    low: [f32; 2],
+    band: [f32; 2],
+}
+
+impl Wah {
+    pub fn new(sample_rate: u32) -> Self {
+        let md = effect_metadata(EffectType::Wah);
+        let mut w = Self {
+            sample_rate: sample_rate as f32,
+            center_hz: normalize(&md[0], md[0].default),
+            resonance: normalize(&md[1], md[1].default),
+            depth: normalize(&md[2], md[2].default),
+            f: 0.0,
+            q: 0.0,
+            low: [0.0; 2],
+            band: [0.0; 2],
+        };
+        w.recompute_coeffs();
+        w
+    }
+
+    fn recompute_coeffs(&mut self) {
+        // Chamberlin SVF frequency coefficient: f = 2*sin(pi*fc/sr), clamped for
+        // stability (valid roughly while fc < sr/6). Damping = 1/Q.
+        let fc = self.center_hz.clamp(20.0, self.sample_rate / 6.0);
+        self.f = 2.0 * (std::f32::consts::PI * fc / self.sample_rate).sin();
+        self.q = 1.0 / self.resonance.max(0.5);
+    }
+}
+
+impl Effect for Wah {
+    fn process_frame(&mut self, frame: &mut [f32; 2]) {
+        for ch in 0..2 {
+            let input = frame[ch];
+            // One pass of the Chamberlin SVF.
+            let high = input - self.low[ch] - self.q * self.band[ch];
+            self.band[ch] += self.f * high;
+            self.low[ch] += self.f * self.band[ch];
+            // Blend the resonant bandpass against the dry signal by `depth`.
+            frame[ch] = input * (1.0 - self.depth) + self.band[ch] * self.depth;
+        }
+    }
+
+    fn set_parameter(&mut self, param_id: u8, value: f32) {
+        match param_id {
+            0 => {
+                self.center_hz = value;
+                self.recompute_coeffs();
+            }
+            1 => {
+                self.resonance = value;
+                self.recompute_coeffs();
+            }
+            2 => self.depth = value.clamp(0.0, 1.0),
+            _ => {}
+        }
+    }
+
+    fn reset(&mut self) {
+        self.low = [0.0; 2];
+        self.band = [0.0; 2];
+    }
+
+    fn set_sample_rate(&mut self, rate: u32) {
+        self.sample_rate = rate as f32;
+        self.recompute_coeffs();
+    }
+}
+
 /// A phase-0 sine LFO source. Unlike `sine()`, whose start phase is seeded from
 /// the node hash (`rnd1(hash)`), this pins the initial phase so that independent
 /// same-rate LFOs (stereo channels, cascaded Phaser stages) stay phase-coherent.
@@ -637,6 +723,7 @@ pub fn create_effect(effect_type: EffectType) -> Option<Box<dyn Effect>> {
             let node = eq_ch() | eq_ch();
             Some(Box::new(FunDspWrapper::new(Box::new(node), vec![low, mid, high])))
         }
+        EffectType::Wah => Some(Box::new(Wah::new(44100))),
         // Catalog variants not implemented this cycle: explicit None, never a
         // phantom passthrough effect.
         _ => None,
@@ -881,6 +968,44 @@ mod tests {
     #[test]
     fn test_equalizer_no_alloc() {
         let mut fx = create_effect(EffectType::Equalizer).expect("Equalizer must instantiate");
+        fx.set_sample_rate(44100);
+        let mut frame = [0.5, -0.5];
+        assert_no_alloc(|| {
+            fx.process_frame(&mut frame);
+        });
+    }
+
+    #[test]
+    fn test_wah_bandpass_shape() {
+        // A resonant bandpass centered near ~800 Hz should pass a tone at its
+        // center frequency far more strongly than one far below it (e.g. 50 Hz).
+        fn rms_at(freq: f32) -> f32 {
+            let sr = 48000.0;
+            let mut w = Wah::new(48000);
+            w.set_parameter(0, 800.0); // center Hz
+            w.set_parameter(1, 8.0); // resonance
+            w.set_parameter(2, 1.0); // full depth
+            let mut acc = 0.0;
+            let n = 4800;
+            // warm up the filter state, then measure.
+            for i in 0..(n * 2) {
+                let s = (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin();
+                let mut frame = [s, s];
+                w.process_frame(&mut frame);
+                if i >= n {
+                    acc += frame[0] * frame[0];
+                }
+            }
+            (acc / n as f32).sqrt()
+        }
+        let at_center = rms_at(800.0);
+        let below = rms_at(50.0);
+        assert!(at_center > below * 2.0, "center {at_center} must dominate low {below}");
+    }
+
+    #[test]
+    fn test_wah_no_alloc() {
+        let mut fx = create_effect(EffectType::Wah).expect("Wah must instantiate");
         fx.set_sample_rate(44100);
         let mut frame = [0.5, -0.5];
         assert_no_alloc(|| {

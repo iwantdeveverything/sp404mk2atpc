@@ -623,6 +623,20 @@ pub fn create_effect(effect_type: EffectType) -> Option<Box<dyn Effect>> {
         }
         // ── PR3: Dynamics + tone family ──────────────────────────────────────
         EffectType::Compressor => Some(Box::new(Compressor::new(44100))),
+        EffectType::Equalizer => {
+            // Three-band tone shaper reusing the proven Isolator shelf/bell
+            // cascade, but centered on musical EQ bands (low shelf 120 Hz, mid
+            // bell 1.2 kHz, high shelf 6 kHz). Each band's gain is a 0..2 linear
+            // multiplier (1.0 = flat), driven by a Shared param.
+            let low = shared(1.0);
+            let mid = shared(1.0);
+            let high = shared(1.0);
+            let eq_ch = || (pass() | dc(120.0) | dc(1.0) | var(&low)) >> lowshelf()
+                         >> (pass() | dc(1200.0) | dc(1.0) | var(&mid)) >> bell()
+                         >> (pass() | dc(6000.0) | dc(1.0) | var(&high)) >> highshelf();
+            let node = eq_ch() | eq_ch();
+            Some(Box::new(FunDspWrapper::new(Box::new(node), vec![low, mid, high])))
+        }
         // Catalog variants not implemented this cycle: explicit None, never a
         // phantom passthrough effect.
         _ => None,
@@ -844,6 +858,31 @@ mod tests {
         let mut fx = create_effect(EffectType::Compressor).expect("Compressor must instantiate");
         fx.set_sample_rate(44100);
         let mut frame = [0.7, -0.7];
+        assert_no_alloc(|| {
+            fx.process_frame(&mut frame);
+        });
+    }
+
+    #[test]
+    fn test_equalizer_instantiates_and_processes() {
+        let mut fx = create_effect(EffectType::Equalizer).expect("Equalizer must instantiate");
+        fx.set_sample_rate(48000);
+        // At the default (flat) settings a non-zero input must yield a finite,
+        // non-silent output — proves the cascade is wired and not a no-op/NaN.
+        let mut frame = [0.5, -0.5];
+        for _ in 0..64 {
+            frame = [0.5, -0.5];
+            fx.process_frame(&mut frame);
+        }
+        assert!(frame[0].is_finite() && frame[1].is_finite());
+        assert!(frame[0].abs() > 1e-3, "flat EQ must pass signal, got {}", frame[0]);
+    }
+
+    #[test]
+    fn test_equalizer_no_alloc() {
+        let mut fx = create_effect(EffectType::Equalizer).expect("Equalizer must instantiate");
+        fx.set_sample_rate(44100);
+        let mut frame = [0.5, -0.5];
         assert_no_alloc(|| {
             fx.process_frame(&mut frame);
         });

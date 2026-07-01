@@ -2,13 +2,13 @@
 *Target branch: `feature/sp404-effects-engine-robustness-2-modulation` (stacked on PR 1)*
 *Satisfies: effects-engine (Effect Inventory, Parameter Metadata Contract, Zero Allocation Processing); ui-routing (Effect Selector UI).*
 
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Write failing instantiation + no-alloc tests (`assert_no_alloc` on `process_frame`) for Tremolo (LFO amplitude mod); implement via fundsp graph; add `effect_metadata` (2 params); register in `create_effect`/`implemented_effects`; make green. [Effect Inventory, Parameter Metadata Contract, Zero Allocation Processing]
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for AutoPan (LFO pan mod); implement fundsp graph; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for Chorus (modulated short delay `var(lfo) >> tap`); implement; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for Flanger (modulated very-short delay + feedback); implement; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for Phaser (cascaded allpass/allpole swept by LFO); implement; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
-- [ ] `src-tauri/src/lib.rs` - Extend the `set_bus_effect` string→`EffectType` mapping with Chorus, Flanger, Phaser, Tremolo, AutoPan. [Effect Selector UI]
-- [ ] `src-tauri/src/audio/effects/mod.rs` - Update the `implemented_effects()` set-equality test to include the 5 modulation effects (13 total). [Implemented-Only Selection]
+- [x] `src-tauri/src/audio/effects/mod.rs` - Write failing instantiation + no-alloc tests (`assert_no_alloc` on `process_frame`) for Tremolo (LFO amplitude mod); implement via fundsp graph; add `effect_metadata` (2 params); register in `create_effect`/`implemented_effects`; make green. [Effect Inventory, Parameter Metadata Contract, Zero Allocation Processing]
+- [x] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for AutoPan (LFO pan mod); implement fundsp graph; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
+- [x] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for Chorus (modulated short delay `var(lfo) >> tap`); implement; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
+- [x] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for Flanger (modulated very-short delay + feedback); implement; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
+- [x] `src-tauri/src/audio/effects/mod.rs` - Write failing tests for Phaser (cascaded allpass/allpole swept by LFO); implement; add metadata; register; make green. [Effect Inventory, Parameter Metadata Contract]
+- [x] `src-tauri/src/lib.rs` - Extend the `set_bus_effect` string→`EffectType` mapping with Chorus, Flanger, Phaser, Tremolo, AutoPan. [Effect Selector UI]
+- [x] `src-tauri/src/audio/effects/mod.rs` - Update the `implemented_effects()` set-equality test to include the 5 modulation effects (13 total). [Implemented-Only Selection]
 
 ## PR 3: Dynamics + tone family (Compressor, Equalizer, Wah)
 *Target branch: `feature/sp404-effects-engine-robustness-3-dynamics` (stacked on PR 2)*

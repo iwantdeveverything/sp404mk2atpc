@@ -37,6 +37,12 @@ fn effect_label(effect: audio::effects::EffectType) -> &'static str {
         EffectType::DjfxLooper => "DjfxLooper",
         EffectType::Scatter => "Scatter",
         EffectType::Slicer => "Slicer",
+        // PR2: Modulation family
+        EffectType::Tremolo => "Tremolo",
+        EffectType::AutoPan => "AutoPan",
+        EffectType::Chorus => "Chorus",
+        EffectType::Flanger => "Flanger",
+        EffectType::Phaser => "Phaser",
         _ => "",
     }
 }

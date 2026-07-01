@@ -1,7 +1,7 @@
 use rtrb::{Producer, RingBuffer};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use crate::audio::effects::{effect_metadata, normalize, EffectType};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use crate::audio::effects::{create_effect, effect_metadata, normalize, EffectSlot, EffectType};
 use serde::{Serialize, Deserialize};
 use std::fs;
 
@@ -89,7 +89,13 @@ pub enum AudioCommand {
     },
     AddBuffer(usize, Arc<AudioBuffer>),
     PreListen { buffer: Arc<AudioBuffer> },
-    SetBusEffect { bus: BusRouting, slot: usize, effect: EffectType },
+    /// The effect is FULLY BUILT off the audio thread (allocation, sample-rate,
+    /// tempo, and default params already applied) and handed over ready to install.
+    /// Carried BY VALUE so the audio thread only *moves* it into the slot — moving
+    /// an `EffectSlot` (a `Box<dyn Effect>` fat pointer + an `f32`) is pure memory
+    /// movement with no heap allocation. An unimplemented variant produces NO
+    /// command (see `set_bus_effect`).
+    SetBusEffect { bus: BusRouting, slot: usize, slot_fx: EffectSlot },
     /// `value` carries the REAL (already-normalized) parameter value. The audio
     /// thread writes it straight to the DSP node with no curve math.
     SetEffectParam { bus: BusRouting, slot: usize, param_id: u8, value: f32 },
@@ -98,11 +104,22 @@ pub enum AudioCommand {
     SetTempo { bpm: f32 },
 }
 
+/// Fallback sample rate used for off-thread effect builds until the audio engine
+/// reports the real device rate (matches fundsp's default).
+pub const DEFAULT_SAMPLE_RATE: u32 = 44_100;
+
 #[derive(Clone)]
 pub struct AudioState {
     pub command_tx: Arc<std::sync::Mutex<Producer<AudioCommand>>>,
     pub resampling_armed: Arc<AtomicBool>,
     pub fx_config: Arc<std::sync::Mutex<AppFxConfig>>,
+    /// Real device sample rate, published by the audio engine on startup. Read
+    /// when building effects OFF the audio thread so time/LFO-based DSP runs at
+    /// the correct rate instead of fundsp's 44.1 kHz default.
+    pub sample_rate: Arc<AtomicU32>,
+    /// Current tempo (BPM), mirrored here so off-thread effect builds seed
+    /// tempo-driven nodes with the live value rather than a hardcoded default.
+    pub tempo: Arc<Mutex<f32>>,
 }
 
 impl AudioState {
@@ -114,9 +131,29 @@ impl AudioState {
                 command_tx: Arc::new(std::sync::Mutex::new(producer)),
                 resampling_armed: Arc::new(AtomicBool::new(false)),
                 fx_config: Arc::new(std::sync::Mutex::new(fx_config)),
+                sample_rate: Arc::new(AtomicU32::new(DEFAULT_SAMPLE_RATE)),
+                tempo: Arc::new(Mutex::new(120.0)),
             },
             consumer,
         )
+    }
+
+    /// Build a fully-initialized effect slot OFF the audio thread: allocation,
+    /// sample-rate, tempo, and normalized default parameters are all applied here
+    /// so the audio thread only has to move the ready slot into place. Returns
+    /// `None` for unimplemented variants (graceful no-op — never enqueued).
+    fn build_effect_slot(&self, effect: EffectType) -> Option<EffectSlot> {
+        let mut fx = create_effect(effect)?;
+        fx.set_sample_rate(self.sample_rate.load(Ordering::Relaxed));
+        if let Ok(tempo) = self.tempo.lock() {
+            fx.set_tempo(*tempo);
+        }
+        // Seed metadata defaults so the live audio matches the UI knobs and the
+        // persisted config (which `set_bus_effect` also writes at mix = 1.0).
+        for (pid, spec) in effect_metadata(effect).iter().enumerate() {
+            fx.set_parameter(pid as u8, normalize(spec, spec.default));
+        }
+        Some(EffectSlot { effect: fx, mix: 1.0 })
     }
 
     pub fn add_buffer(&self, pad_id: usize, buffer: AudioBuffer) {
@@ -138,6 +175,15 @@ impl AudioState {
     }
 
     pub fn set_bus_effect(&self, bus: BusRouting, slot: usize, effect: EffectType) {
+        // Build the effect OFF the audio thread (this is where allocation is
+        // allowed, per the engine's zero-alloc contract). An unimplemented variant
+        // yields `None` → graceful no-op: nothing is persisted or enqueued, so a
+        // live slot is never disturbed.
+        let slot_fx = match self.build_effect_slot(effect) {
+            Some(s) => s,
+            None => return,
+        };
+
         if let Ok(mut config) = self.fx_config.lock() {
             let chain = match bus {
                 BusRouting::Bus1 => Some(&mut config.bus1),
@@ -156,10 +202,13 @@ impl AudioState {
                     });
                     config.save();
                 }
+            } else {
+                // Dry bus has no effect chain; nothing to install.
+                return;
             }
         }
         if let Ok(mut tx) = self.command_tx.lock() {
-            let _ = tx.push(AudioCommand::SetBusEffect { bus, slot, effect });
+            let _ = tx.push(AudioCommand::SetBusEffect { bus, slot, slot_fx });
         }
     }
 
@@ -237,6 +286,11 @@ impl AudioState {
     }
 
     pub fn set_tempo(&self, bpm: f32) {
+        // Mirror the tempo for off-thread effect builds (so a freshly selected
+        // tempo-driven effect starts at the live BPM), then drive the audio thread.
+        if let Ok(mut tempo) = self.tempo.lock() {
+            *tempo = bpm;
+        }
         if let Ok(mut tx) = self.command_tx.lock() {
             let _ = tx.push(AudioCommand::SetTempo { bpm });
         }
